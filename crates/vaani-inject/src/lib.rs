@@ -327,22 +327,37 @@ impl Service {
             self.save_clipboard().unwrap_or_default()
         };
 
-        // 2. Offer our text and press paste.
+        // 2. Offer our text, give apps a moment, then press paste. Some apps (Scintilla-based
+        //    editors such as Nextpad++, Wine apps) prefetch the clipboard the instant its owner
+        //    changes and paste from that cache, so a Ctrl+V sent within a millisecond pastes
+        //    nothing. 40 ms is invisible to the user and leaves a wide margin (10 ms was enough).
         self.own(self.text_offer(text))?;
+        let mut prefetched = false;
+        self.serve_for(Duration::from_millis(40), &mut prefetched)?;
         self.wait_modifiers_released();
         let started = Instant::now();
         self.send_paste(terminal)?;
+        tracing::debug!(%app, terminal, "paste key sent");
 
-        // 3. Serve until the app has read the text (+150 ms for apps that ask several times).
+        // 3. Serve until the app has read the text. Only reads after the key press count:
+        //    clipboard managers and file managers read every new clipboard right away, so a
+        //    read before the key press says nothing about the paste.
         let deadline = started + Duration::from_millis(1500);
         let mut read_at: Option<Instant> = None;
         while Instant::now() < deadline {
-            if read_at.is_some_and(|t| t.elapsed() > Duration::from_millis(150)) {
+            // Keep serving a while after the first read: some apps ask several times.
+            if read_at.is_some_and(|t| t.elapsed() > Duration::from_millis(300)) {
                 break;
             }
             match self.conn.poll_for_event().map_err(x)? {
                 Some(Event::SelectionRequest(req)) => {
                     let served = self.serve(&req)?;
+                    tracing::debug!(
+                        requestor = req.requestor,
+                        target = req.target,
+                        served,
+                        "clipboard read after paste"
+                    );
                     if served && req.target != self.a.targets && req.target != self.a.timestamp {
                         read_at.get_or_insert_with(Instant::now);
                     }
@@ -357,9 +372,20 @@ impl Service {
             }
         }
 
-        let Some(read_at) = read_at else {
-            tracing::warn!(%app, "no app read the dictated text; leaving it on the clipboard");
-            return Ok(Outcome::LeftOnClipboard { app });
+        let read_at = match read_at {
+            Some(t) => t,
+            // The app pasted from its own prefetched copy; we can't see that happen, so give
+            // it a generous moment before putting the old clipboard back.
+            None if prefetched && self.owned => {
+                let mut ignored = false;
+                self.serve_for(Duration::from_millis(400), &mut ignored)?;
+                tracing::debug!(%app, "no read after paste; assuming the app used its prefetched copy");
+                Instant::now()
+            }
+            None => {
+                tracing::warn!(%app, "no app read the dictated text; leaving it on the clipboard");
+                return Ok(Outcome::LeftOnClipboard { app });
+            }
         };
         let after = read_at.duration_since(started);
 
@@ -381,6 +407,31 @@ impl Service {
             terminal,
             app,
         })
+    }
+
+    /// Answer clipboard requests for `dur`; sets `read` if anyone fetched the text itself.
+    fn serve_for(&mut self, dur: Duration, read: &mut bool) -> Result<(), InjectError> {
+        let end = Instant::now() + dur;
+        while Instant::now() < end && self.owned {
+            match self.conn.poll_for_event().map_err(x)? {
+                Some(Event::SelectionRequest(req)) => {
+                    let served = self.serve(&req)?;
+                    tracing::debug!(
+                        requestor = req.requestor,
+                        target = req.target,
+                        served,
+                        "clipboard read before paste"
+                    );
+                    if served && req.target != self.a.targets && req.target != self.a.timestamp {
+                        *read = true;
+                    }
+                }
+                Some(Event::SelectionClear(_)) => self.owned = false,
+                Some(_) => {}
+                None => thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        Ok(())
     }
 
     /// Wait (up to 400 ms) until Shift/Ctrl/Alt/Super are physically up, so our Ctrl+V is not

@@ -469,8 +469,9 @@ impl Controller {
         let Some(h) = &self.history else { return };
         let last = h.lock().ok().and_then(|h| h.last().ok().flatten());
         if let (Some(e), Some(i)) = (last, &self.injector) {
-            if let Err(err) = i.insert(&e.text) {
-                tracing::warn!("paste-last failed: {err}");
+            match i.insert(&e.text) {
+                Ok(outcome) => tracing::info!(?outcome, "paste-last"),
+                Err(err) => tracing::warn!("paste-last failed: {err}"),
             }
         }
     }
