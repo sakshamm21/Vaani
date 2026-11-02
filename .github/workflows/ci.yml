@@ -18,7 +18,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: System packages
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-4-dev libadwaita-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-4-dev
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all --check

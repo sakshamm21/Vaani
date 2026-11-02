@@ -10,6 +10,9 @@ authors.workspace = true
 
 [dependencies]
 rusqlite.workspace = true
+oo7.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -3,6 +3,7 @@
 //! [`SttEngine`] is the one interface the app uses. [`local::LocalEngine`] runs models in the
 //! supervised `vaani-worker` process; cloud providers implement the same trait.
 
+pub mod cloud;
 pub mod local;
 pub mod protocol;
 

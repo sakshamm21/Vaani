@@ -81,6 +81,18 @@ pub struct General {
     pub sounds: bool,
     /// Show the floating pill while dictating.
     pub overlay: bool,
+    /// Look of the settings window and pill.
+    pub theme: Theme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    /// Follow the desktop's light or dark setting.
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 impl Default for General {
@@ -90,6 +102,7 @@ impl Default for General {
             autostart: true,
             sounds: true,
             overlay: true,
+            theme: Theme::System,
         }
     }
 }
@@ -158,6 +171,8 @@ pub struct Engine {
     /// A provider id such as "groq" or "openai_compatible".
     pub cloud_provider: String,
     pub cloud_model: String,
+    /// Base URL for the "openai_compatible" provider; empty uses the provider's default.
+    pub cloud_base_url: String,
     /// Decoding threads for local models; 0 picks automatically (physical cores, at most 4).
     pub threads: u32,
 }
@@ -169,6 +184,7 @@ impl Default for Engine {
             local_model: "parakeet-tdt-0.6b-v3".into(),
             cloud_provider: "groq".into(),
             cloud_model: "whisper-large-v3-turbo".into(),
+            cloud_base_url: String::new(),
             threads: 0,
         }
     }

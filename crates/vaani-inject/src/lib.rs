@@ -9,6 +9,8 @@
 //! tells the user to paste it by hand.
 
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::os::fd::AsFd;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -59,18 +61,22 @@ enum Cmd {
 #[derive(Clone)]
 pub struct Injector {
     tx: Sender<Cmd>,
+    /// Written to after each command so the service thread wakes from poll().
+    wake: std::sync::Arc<std::os::unix::net::UnixStream>,
 }
 
 impl Injector {
     pub fn start() -> Result<Self, InjectError> {
         let (tx, rx) = unbounded();
         let (ready_tx, ready_rx) = bounded(1);
+        let (wake, wake_rx) = std::os::unix::net::UnixStream::pair().map_err(x)?;
+        wake_rx.set_nonblocking(true).map_err(x)?;
         thread::Builder::new()
             .name("inject".into())
             .spawn(move || match Service::new() {
                 Ok(mut s) => {
                     let _ = ready_tx.send(Ok(()));
-                    s.run(rx);
+                    s.run(rx, wake_rx);
                 }
                 Err(e) => {
                     let _ = ready_tx.send(Err(e));
@@ -78,27 +84,34 @@ impl Injector {
             })
             .map_err(x)?;
         ready_rx.recv().map_err(|_| InjectError::Gone)??;
-        Ok(Self { tx })
+        Ok(Self {
+            tx,
+            wake: std::sync::Arc::new(wake),
+        })
+    }
+
+    fn send(&self, cmd: Cmd) -> Result<(), InjectError> {
+        self.tx.send(cmd).map_err(|_| InjectError::Gone)?;
+        let _ = (&*self.wake).write(&[1]);
+        Ok(())
     }
 
     /// Insert text into the focused app. Blocks until pasted or given up (about 1.5 s max).
     pub fn insert(&self, text: &str) -> Result<Outcome, InjectError> {
         let (tx, rx) = bounded(1);
-        self.tx
-            .send(Cmd::Insert(text.to_string(), tx))
-            .map_err(|_| InjectError::Gone)?;
+        self.send(Cmd::Insert(text.to_string(), tx))?;
         rx.recv().map_err(|_| InjectError::Gone)?
     }
 
     /// Just put text on the clipboard (e.g. "copy" from history).
     pub fn set_clipboard(&self, text: &str) {
-        let _ = self.tx.send(Cmd::SetClipboard(text.to_string()));
+        let _ = self.send(Cmd::SetClipboard(text.to_string()));
     }
 
     /// WM_CLASS of the focused window, lowercased (e.g. "firefox", "gnome-terminal").
     pub fn focused_app(&self) -> String {
         let (tx, rx) = bounded(1);
-        if self.tx.send(Cmd::FocusedApp(tx)).is_err() {
+        if self.send(Cmd::FocusedApp(tx)).is_err() {
             return String::new();
         }
         rx.recv_timeout(Duration::from_millis(500))
@@ -221,8 +234,10 @@ impl Service {
         })
     }
 
-    fn run(&mut self, rx: Receiver<Cmd>) {
+    fn run(&mut self, rx: Receiver<Cmd>, mut wake: std::os::unix::net::UnixStream) {
         loop {
+            let mut drain = [0u8; 64];
+            while matches!(wake.read(&mut drain), Ok(n) if n > 0) {}
             match rx.try_recv() {
                 Ok(Cmd::Insert(text, reply)) => {
                     let r = self.insert(&text);
@@ -242,7 +257,7 @@ impl Service {
                 Ok(Some(ev)) => {
                     self.handle_background(ev);
                 }
-                Ok(None) => thread::sleep(Duration::from_millis(3)),
+                Ok(None) => wait_readable(&[self.conn.stream().as_fd(), wake.as_fd()], 1000),
                 Err(e) => {
                     tracing::error!("clipboard service lost the X connection: {e}");
                     return;
@@ -575,6 +590,20 @@ impl Service {
         }
         String::new()
     }
+}
+
+/// Block until any of `fds` is readable or `timeout_ms` passes (no busy polling).
+fn wait_readable(fds: &[std::os::fd::BorrowedFd<'_>], timeout_ms: i32) {
+    use rustix::event::{PollFd, PollFlags, Timespec};
+    let mut p: Vec<PollFd<'_>> = fds
+        .iter()
+        .map(|fd| PollFd::new(fd, PollFlags::IN))
+        .collect();
+    let t = Timespec {
+        tv_sec: i64::from(timeout_ms / 1000),
+        tv_nsec: i64::from(timeout_ms % 1000) * 1_000_000,
+    };
+    let _ = rustix::event::poll(&mut p, Some(&t));
 }
 
 #[cfg(test)]

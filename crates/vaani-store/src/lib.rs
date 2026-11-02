@@ -2,6 +2,8 @@
 //!
 //! Every transcript is saved here *before* it is typed, so words are never lost.
 
+pub mod secrets;
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 

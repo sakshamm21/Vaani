@@ -4,6 +4,7 @@
 //! without grabbing the key, so the key keeps working in other apps, and they report key-up,
 //! which push-to-talk needs. Auto-repeat presses are ignored. Esc while dictating cancels.
 
+use std::os::fd::AsFd;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -200,7 +201,9 @@ pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
                 let event = match conn.poll_for_event() {
                     Ok(Some(e)) => e,
                     Ok(None) => {
-                        thread::sleep(Duration::from_millis(4));
+                        // Sleep until X has something for us; wake now and then to notice
+                        // a changed key or a stop request.
+                        wait_readable(&[conn.stream().as_fd()], 250);
                         continue;
                     }
                     Err(e) => {
@@ -249,10 +252,24 @@ pub fn capture_next_key(timeout: Duration) -> Result<Option<&'static str>, Hotke
                 }
             }
             Some(_) => {}
-            None => thread::sleep(Duration::from_millis(5)),
+            None => wait_readable(&[conn.stream().as_fd()], 50),
         }
     }
     Ok(None)
+}
+
+/// Block until any of `fds` is readable or `timeout_ms` passes (no busy polling).
+fn wait_readable(fds: &[std::os::fd::BorrowedFd<'_>], timeout_ms: i32) {
+    use rustix::event::{PollFd, PollFlags, Timespec};
+    let mut p: Vec<PollFd<'_>> = fds
+        .iter()
+        .map(|fd| PollFd::new(fd, PollFlags::IN))
+        .collect();
+    let t = Timespec {
+        tv_sec: i64::from(timeout_ms / 1000),
+        tv_nsec: i64::from(timeout_ms % 1000) * 1_000_000,
+    };
+    let _ = rustix::event::poll(&mut p, Some(&t));
 }
 
 #[cfg(test)]

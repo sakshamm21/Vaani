@@ -11,12 +11,13 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, select, tick};
 use vaani_audio::{Level, Recorder, Recording};
-use vaani_core::config::{Config, HotkeyMode};
+use vaani_core::config::{Config, EngineKind, HotkeyMode};
 use vaani_core::state::{Command, Effect, Machine, State};
 use vaani_hotkey::HotkeyEvent;
 use vaani_inject::{Injector, Outcome};
 use vaani_store::History;
 use vaani_stt::SttEngine;
+use vaani_stt::cloud::CloudEngine;
 use vaani_stt::local::LocalEngine;
 
 /// A quick tap shorter than this starts hands-free dictation instead of push-to-talk.
@@ -181,9 +182,64 @@ impl Controller {
         }
     }
 
-    /// Load the configured model in the background; dictation waits for it if needed.
+    /// Load the configured engine in the background; dictation waits for it if needed.
     fn load_engine(&mut self) {
-        let id = self.config.engine.local_model.clone();
+        let slot = self.engine.clone();
+        let shared = self.shared.clone();
+        let generation = self.engine_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let current = self.engine_generation.clone();
+        let cfg = self.config.engine.clone();
+        // Drop the old engine (and its worker) right away so memory is freed before reloading.
+        if let Ok(mut s) = slot.lock() {
+            *s = None;
+        }
+
+        if cfg.kind == EngineKind::Cloud {
+            let Some(provider) = vaani_stt::cloud::provider(&cfg.cloud_provider) else {
+                self.set_engine(EngineStatus::Failed(format!(
+                    "unknown provider {}",
+                    cfg.cloud_provider
+                )));
+                return;
+            };
+            self.set_engine(EngineStatus::Loading(provider.name.into()));
+            let _ = thread::Builder::new()
+                .name("engine-load".into())
+                .spawn(move || {
+                    let key = vaani_store::secrets::get_key(provider.id).unwrap_or_default();
+                    let (engine, status): (Option<Box<dyn SttEngine>>, _) =
+                        if key.is_empty() && provider.id != "openai_compatible" {
+                            (
+                                None,
+                                EngineStatus::Missing(format!("{} API key", provider.name)),
+                            )
+                        } else {
+                            match CloudEngine::new(
+                                provider,
+                                &cfg.cloud_base_url,
+                                &cfg.cloud_model,
+                                &key,
+                            ) {
+                                Ok(e) => {
+                                    let name = e.name();
+                                    (Some(Box::new(e)), EngineStatus::Ready(name))
+                                }
+                                Err(e) => (None, EngineStatus::Failed(e.to_string())),
+                            }
+                        };
+                    if current.load(Ordering::SeqCst) == generation {
+                        if let Ok(mut s) = slot.lock() {
+                            *s = engine;
+                        }
+                        if let Ok(mut e) = shared.engine.lock() {
+                            *e = status;
+                        }
+                    }
+                });
+            return;
+        }
+
+        let id = cfg.local_model.clone();
         let Some(model) = vaani_models::find(&id) else {
             self.set_engine(EngineStatus::Failed(format!("unknown model {id}")));
             return;
@@ -192,15 +248,11 @@ impl Controller {
             self.set_engine(EngineStatus::Missing(model.name.clone()));
             return;
         }
-        let threads = match self.config.engine.threads {
+        let threads = match cfg.threads {
             0 => vaani_models::default_threads() as u32,
             n => n,
         };
         self.set_engine(EngineStatus::Loading(model.name.clone()));
-        let slot = self.engine.clone();
-        let shared = self.shared.clone();
-        let generation = self.engine_generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let current = self.engine_generation.clone();
         let _ = thread::Builder::new().name("engine-load".into()).spawn(move || {
             let mut engine = LocalEngine::new(model.clone(), threads);
             let status = match engine.warm_up() {

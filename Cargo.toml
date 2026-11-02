@@ -42,10 +42,15 @@ bzip2 = "0.5"
 rusqlite = { version = "0.37", features = ["bundled"] }
 cpal = "0.18"
 rubato = "5"
+rustix = { version = "1", features = ["event"] }
 x11rb = { version = "0.14", features = ["xinput", "xtest"] }
 sherpa-onnx = "2"
 crossbeam-channel = "0.5"
 hound = "3.5"
+gtk4 = "0.11"
+gdk4-x11 = "0.11"
+ksni = "0.3"
+oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_crypto"] }
 serde_json = "1"
 
 [workspace.lints.rust]

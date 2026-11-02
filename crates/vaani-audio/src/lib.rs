@@ -95,17 +95,26 @@ impl Recorder {
     pub fn start(&self, device: Option<&str>) -> Result<Recording, AudioError> {
         // Testing aid: VAANI_FAKE_MIC=/path/to/16k-or-any.wav replays a file instead of the mic.
         if let Some(path) = std::env::var_os("VAANI_FAKE_MIC") {
-            let mut r = hound::WavReader::open(&path).map_err(|e| AudioError::Open(e.to_string()))?;
+            let mut r =
+                hound::WavReader::open(&path).map_err(|e| AudioError::Open(e.to_string()))?;
             let spec = r.spec();
             let ch = usize::from(spec.channels).max(1);
             let raw: Vec<f32> = match spec.sample_format {
                 hound::SampleFormat::Float => r.samples::<f32>().flatten().collect(),
                 hound::SampleFormat::Int => {
                     let scale = (1i64 << (spec.bits_per_sample - 1)) as f32;
-                    r.samples::<i32>().flatten().map(|v| v as f32 / scale).collect()
+                    r.samples::<i32>()
+                        .flatten()
+                        .map(|v| v as f32 / scale)
+                        .collect()
                 }
             };
-            let mono: Vec<f32> = raw.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+            let mono: Vec<f32> = raw
+                .chunks(ch)
+                .map(|f| f.iter().sum::<f32>() / ch as f32)
+                .collect();
+            let rms = (mono.iter().map(|v| v * v).sum::<f32>() / mono.len().max(1) as f32).sqrt();
+            self.level.set(rms.min(1.0));
             return Ok(Recording {
                 stream: None,
                 samples: Arc::new(Mutex::new(mono)),

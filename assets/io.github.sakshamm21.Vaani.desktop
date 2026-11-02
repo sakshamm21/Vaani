@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Vaani
+GenericName=Voice dictation
+Comment=Hold a key, speak, and your words appear in any app
+Exec=vaani settings
+Icon=io.github.sakshamm21.Vaani
+Terminal=false
+Categories=Utility;Accessibility;AudioVideo;
+Keywords=dictation;voice;speech;transcribe;whisper;parakeet;
+StartupNotify=false

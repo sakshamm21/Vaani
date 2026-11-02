@@ -38,18 +38,75 @@ struct Check {
 #[derive(Serialize)]
 struct Component {
     name: &'static str,
-    status: &'static str,
+    ok: bool,
+    status: String,
 }
 
-/// Components not built yet. Each moves out of this list when its milestone lands.
-const PLANNED: &[(&str, &str)] = &[
-    ("audio capture", "planned for M1"),
-    ("speech-to-text", "planned for M1"),
-    ("hotkey", "planned for M1"),
-    ("text insertion", "planned for M1"),
-    ("overlay", "planned for M1"),
-    ("tray", "planned for M1"),
-];
+fn component(name: &'static str, r: Result<String, String>) -> Component {
+    match r {
+        Ok(status) => Component {
+            name,
+            ok: true,
+            status,
+        },
+        Err(status) => Component {
+            name,
+            ok: false,
+            status,
+        },
+    }
+}
+
+fn components(session: &SessionInfo) -> Vec<Component> {
+    let config = vaani_core::paths::config_file()
+        .and_then(|p| Config::load(&p).ok())
+        .unwrap_or_default();
+    let mut v = Vec::new();
+    v.push(component(
+        "hotkey",
+        if session.session_type == SessionType::X11 || session.xwayland {
+            Ok(format!("X11 XInput2, key {}", config.hotkey.key))
+        } else {
+            Err("needs an X11 session (Wayland support comes later)".into())
+        },
+    ));
+    let mics = vaani_audio::input_devices();
+    v.push(component(
+        "microphone",
+        if mics.is_empty() {
+            Err("no input devices found".into())
+        } else if config.audio.device.is_empty() {
+            Ok(format!("system default ({} available)", mics.len()))
+        } else if mics.contains(&config.audio.device) {
+            Ok(config.audio.device.clone())
+        } else {
+            Err(format!(
+                "configured mic `{}` not found",
+                config.audio.device
+            ))
+        },
+    ));
+    v.push(component(
+        "speech model",
+        match vaani_models::find(&config.engine.local_model) {
+            None => Err(format!("unknown model `{}`", config.engine.local_model)),
+            Some(m) if m.is_installed() => Ok(format!("{} (downloaded)", m.name)),
+            Some(m) => Err(format!(
+                "{} not downloaded: vaani models download {}",
+                m.name, m.id
+            )),
+        },
+    ));
+    v.push(component(
+        "text insertion",
+        if session.x11_display.is_some() {
+            Ok("clipboard paste via XTest".into())
+        } else {
+            Err("needs an X11 display".into())
+        },
+    ));
+    v
+}
 
 pub fn run(json: bool) -> Result<ExitCode> {
     crate::logging::init_cli();
@@ -67,6 +124,12 @@ pub fn run(json: bool) -> Result<ExitCode> {
 }
 
 fn collect() -> Report {
+    let mut r = collect_base();
+    r.components = components(&r.session);
+    r
+}
+
+fn collect_base() -> Report {
     let config_path = vaani_core::paths::config_file();
     let config = match &config_path {
         None => ConfigReport {
@@ -120,10 +183,7 @@ fn collect() -> Report {
         log_dir: vaani_core::paths::log_dir().map(|p| p.display().to_string()),
         worker: worker_check(),
         running: running(),
-        components: PLANNED
-            .iter()
-            .map(|(name, status)| Component { name, status })
-            .collect(),
+        components: Vec::new(),
     }
 }
 
@@ -246,6 +306,11 @@ fn print_text(r: &Report) {
     println!();
     println!("Components");
     for c in &r.components {
-        println!("  {:<16} {}", format!("{}:", c.name), c.status);
+        println!(
+            "  {:<16} {} {}",
+            format!("{}:", c.name),
+            if c.ok { "ok  " } else { "FAIL" },
+            c.status
+        );
     }
 }

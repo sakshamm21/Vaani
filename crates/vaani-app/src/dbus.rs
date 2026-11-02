@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
-use tokio::sync::Notify;
 use vaani_core::state::Command;
 
 use crate::controller::{EngineStatus, Input, Shared};
@@ -16,12 +15,11 @@ use crate::controller::{EngineStatus, Input, Shared};
 pub struct Service {
     tx: Sender<Input>,
     shared: Arc<Shared>,
-    quit: Arc<Notify>,
 }
 
 impl Service {
-    pub fn new(tx: Sender<Input>, shared: Arc<Shared>, quit: Arc<Notify>) -> Self {
-        Self { tx, shared, quit }
+    pub fn new(tx: Sender<Input>, shared: Arc<Shared>) -> Self {
+        Self { tx, shared }
     }
 
     fn apply(&self, cmd: Command) -> String {
@@ -67,7 +65,7 @@ impl Service {
     }
     fn quit(&self) {
         tracing::info!("quit requested over D-Bus");
-        self.quit.notify_one();
+        crate::ui::request_quit();
     }
     #[zbus(property)]
     fn version(&self) -> String {
@@ -120,6 +118,11 @@ pub fn client_call(call: Call) -> Result<ExitCode> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// True when a call failed only because Vaani isn't running.
+pub fn not_running(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<zbus::Error>().is_some_and(is_not_running)
 }
 
 /// Call the running app; Ok(None) for calls with no output.
