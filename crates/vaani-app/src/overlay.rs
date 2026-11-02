@@ -432,6 +432,35 @@ pub fn center_window(w: &gtk4::Window) {
     let (mx, my, mw, mh) = pointer_monitor(&c, w);
     let x = mx + ((mw - ww) / 2).max(0);
     let y = my + ((mh - wh) / 2).max(0);
+    // Tell the window manager this position was chosen on purpose (USPosition | PPosition),
+    // so it doesn't apply its own placement, then move there.
+    let wm_normal_hints: u32 = AtomEnum::WM_NORMAL_HINTS.into();
+    let wm_size_hints: u32 = AtomEnum::WM_SIZE_HINTS.into();
+    let mut hints = [0u32; 18];
+    hints[0] = 1 | 4;
+    hints[1] = x as u32;
+    hints[2] = y as u32;
+    hints[3] = ww as u32;
+    hints[4] = wh as u32;
+    let _ = c.change_property32(
+        PropMode::REPLACE,
+        id,
+        wm_normal_hints,
+        wm_size_hints,
+        &hints,
+    );
     let _ = c.configure_window(id, &ConfigureWindowAux::new().x(x).y(y));
     let _ = c.flush();
+}
+
+/// Centre `w` when it is shown, and once more after the window manager has placed it.
+pub fn keep_centered_on_open(w: &gtk4::Window) {
+    w.connect_realize(center_window);
+    w.connect_map(|w| {
+        center_window(w);
+        let w = w.clone();
+        gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+            center_window(&w);
+        });
+    });
 }

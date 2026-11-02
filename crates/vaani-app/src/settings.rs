@@ -97,6 +97,22 @@ fn config_path() -> Option<std::path::PathBuf> {
 }
 
 /// Change the config, save it, and update the shared copy so the UI stays consistent.
+/// The header button shows the mode the window is in now: a moon in dark mode, a sun in light.
+fn set_theme_icon(btn: &gtk4::Button) {
+    let (icon, tip) = if crate::style::is_dark() {
+        (
+            "weather-clear-night-symbolic",
+            "Dark mode. Click for light mode.",
+        )
+    } else {
+        ("weather-clear-symbolic", "Light mode. Click for dark mode.")
+    };
+    if btn.icon_name().as_deref() != Some(icon) {
+        btn.set_icon_name(icon);
+        btn.set_tooltip_text(Some(tip));
+    }
+}
+
 fn update_config(shared: &Shared, f: impl FnOnce(&mut Config)) {
     let mut c = shared.config.lock().map(|c| c.clone()).unwrap_or_default();
     f(&mut c);
@@ -264,21 +280,25 @@ impl Settings {
         body.append(&stack);
         window.set_child(Some(&body));
 
-        inner
-            .theme_btn
-            .set_tooltip_text(Some("Switch light / dark"));
         header.pack_end(&inner.theme_btn);
         {
             let shared = shared.clone();
             let drop = inner.theme_drop.clone();
+            let btn = inner.theme_btn.clone();
             inner.theme_btn.connect_clicked(move |_| {
                 let next = if crate::style::is_dark() {
                     Theme::Light
                 } else {
                     Theme::Dark
                 };
-                drop.set_selected(theme_index(next));
-                update_config(&shared, |c| c.general.theme = next);
+                // Switch now, then save. Selecting the dropdown entry saves the setting.
+                crate::style::apply(next);
+                set_theme_icon(&btn);
+                if drop.selected() == theme_index(next) {
+                    update_config(&shared, |c| c.general.theme = next);
+                } else {
+                    drop.set_selected(theme_index(next));
+                }
             });
         }
 
@@ -290,7 +310,7 @@ impl Settings {
         if let Ok(p) = std::env::var("VAANI_PAGE") {
             s.inner.stack.set_visible_child_name(&p);
         }
-        window.connect_map(crate::overlay::center_window);
+        crate::overlay::keep_centered_on_open(&window);
         window.present();
         s
     }
@@ -300,13 +320,7 @@ impl Settings {
     }
 
     fn sync_theme_button(&self) {
-        // Show what you'd switch to.
-        let icon = if crate::style::is_dark() {
-            "weather-clear-symbolic"
-        } else {
-            "weather-clear-night-symbolic"
-        };
-        self.inner.theme_btn.set_icon_name(icon);
+        set_theme_icon(&self.inner.theme_btn);
         let logo = crate::keys::app_icon();
         if self.inner.window.icon_name().as_deref() != Some(logo) {
             self.inner.window.set_icon_name(Some(logo));
@@ -788,6 +802,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
                 2 => Theme::Dark,
                 _ => Theme::System,
             };
+            crate::style::apply(t);
             update_config(&shared, |c| c.general.theme = t);
         });
     }
