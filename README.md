@@ -117,8 +117,9 @@ time. If a cloud engine is active, the indicator says so.
 
 Text is inserted by placing it on the clipboard and sending a paste shortcut to the focused
 window (Ctrl+V, or Ctrl+Shift+V in terminals). Your previous clipboard contents are restored
-afterwards. Every dictation is also saved to History before it is inserted, so text is never
-lost if an application does not accept the paste.
+afterwards. Each dictation is also saved to History before it is inserted, so text is not lost if an
+application does not accept the paste. History keeps the last 20 dictations by default; this
+can be changed, or turned off, under **General → History**.
 
 Recordings are limited to five minutes.
 
@@ -140,7 +141,7 @@ immediately.
 | Remove filler words | Removes "um", "uh" and similar words. |
 | Add a space after each dictation | Separates consecutive dictations. |
 | Start Vaani when I log in | Adds or removes the autostart entry. |
-| Don't keep history | Dictations are inserted but not saved. |
+| History | How many dictations to keep: none, the last 20 (default), 100 or 1,000, or all. Older entries are deleted automatically. |
 
 **Speech model** chooses between local and cloud recognition, sets the language, and manages
 downloaded models.
@@ -226,7 +227,7 @@ combination that Vaani's own shortcut does not support.
 | --- | --- |
 | `~/.config/vaani/config.toml` | Settings |
 | `~/.local/share/vaani/models/` | Downloaded models |
-| `~/.local/share/vaani/history.db` | Dictation history (SQLite) |
+| `~/.local/share/vaani/history.db` | Dictation history (SQLite). Keeps the last 20 by default; see **General → History**. |
 | `~/.local/state/vaani/logs/` | Logs, kept for seven days |
 | `~/.config/autostart/io.github.sakshamm21.Vaani.desktop` | Autostart entry |
 

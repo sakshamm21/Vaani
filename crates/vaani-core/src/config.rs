@@ -239,13 +239,35 @@ impl Default for Insert {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Privacy {
     /// Block every network call (cloud engines and AI cleanup are refused).
     pub local_only: bool,
-    /// Don't save dictations to history.
+    /// Don't save dictations to history (same as `keep_history = 0`).
     pub incognito: bool,
+    /// How many dictations History keeps: the newest N, 0 for none, -1 for all.
+    pub keep_history: i64,
+}
+
+impl Default for Privacy {
+    fn default() -> Self {
+        Self {
+            local_only: false,
+            incognito: false,
+            keep_history: 20,
+        }
+    }
+}
+
+impl Privacy {
+    /// Effective limit: `None` keeps everything, `Some(0)` keeps nothing.
+    pub fn history_limit(&self) -> Option<usize> {
+        if self.incognito {
+            return Some(0);
+        }
+        usize::try_from(self.keep_history).ok()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -266,6 +288,12 @@ impl Default for Logging {
 impl Config {
     /// Check values that parse but make no sense.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.privacy.keep_history < -1 {
+            return Err(ConfigError::Invalid {
+                field: "privacy.keep_history",
+                reason: "must be a number of dictations, 0 for none, or -1 for all".into(),
+            });
+        }
         if self.general.language.trim().is_empty() {
             return Err(ConfigError::Invalid {
                 field: "general.language",

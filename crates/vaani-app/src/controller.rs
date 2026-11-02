@@ -126,7 +126,12 @@ impl Controller {
         let history = vaani_core::paths::data_dir()
             .map(|d| d.join("history.db"))
             .and_then(|p| match History::open(&p) {
-                Ok(h) => Some(Arc::new(Mutex::new(h))),
+                Ok(h) => {
+                    if let Some(keep) = config.privacy.history_limit() {
+                        let _ = h.trim(keep);
+                    }
+                    Some(Arc::new(Mutex::new(h)))
+                }
                 Err(e) => {
                     tracing::error!("history unavailable: {e}");
                     None
@@ -536,13 +541,20 @@ impl Job {
             .unwrap_or_default();
 
         // Never lose words: save before typing.
-        let id = if self.config.privacy.incognito {
+        let limit = self.config.privacy.history_limit();
+        let id = if limit == Some(0) {
             None
         } else {
             self.history
                 .as_ref()
                 .and_then(|h| h.lock().ok())
-                .and_then(|h| h.add(&text, &raw, &engine_name, audio_ms, &app).ok())
+                .and_then(|h| {
+                    let id = h.add(&text, &raw, &engine_name, audio_ms, &app).ok();
+                    if let Some(keep) = limit {
+                        let _ = h.trim(keep);
+                    }
+                    id
+                })
         };
         if self.cancel.load(Ordering::Relaxed) {
             return;

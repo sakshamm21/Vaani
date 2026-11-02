@@ -927,18 +927,44 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.general.autostart = v)
         })
     };
-    let s6 = {
-        let shared = shared.clone();
-        switch(cfg.privacy.incognito, move |v| {
-            update_config(&shared, |c| c.privacy.incognito = v)
-        })
+    const KEEP: &[(i64, &str)] = &[
+        (0, "Don't keep"),
+        (20, "Last 20"),
+        (100, "Last 100"),
+        (1000, "Last 1,000"),
+        (-1, "Keep all"),
+    ];
+    let keep_names: Vec<&str> = KEEP.iter().map(|(_, n)| *n).collect();
+    let keep = gtk4::DropDown::from_strings(&keep_names);
+    let current = if cfg.privacy.incognito {
+        0
+    } else {
+        cfg.privacy.keep_history
     };
+    keep.set_selected(KEEP.iter().position(|(n, _)| *n == current).unwrap_or(1) as u32);
+    {
+        let shared = shared.clone();
+        keep.connect_selected_notify(move |d| {
+            let n = KEEP
+                .get(d.selected() as usize)
+                .map(|(n, _)| *n)
+                .unwrap_or(20);
+            update_config(&shared, |c| {
+                c.privacy.keep_history = n;
+                c.privacy.incognito = false;
+            });
+            // Apply now, not only on the next dictation.
+            if let (Some(h), Ok(n)) = (open_history(), usize::try_from(n)) {
+                let _ = h.trim(n);
+            }
+        });
+    }
     content.append(&card(&[
         row("Start Vaani when I log in", "", &s5),
         row(
-            "Don't keep history",
-            "Dictations are inserted but not saved.",
-            &s6,
+            "History",
+            "How many dictations to keep. Older ones are deleted automatically. Audio is never stored.",
+            &keep,
         ),
     ]));
     sw

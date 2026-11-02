@@ -149,6 +149,8 @@ window.vaani-settings .sidebar row:selected {
   background-color: alpha(@v_accent, 0.13); color: @v_accent_strong; font-weight: 600;
 }
 window.vaani-settings .sidebar row label { color: inherit; }
+window.vaani-settings .sidebar row, window.vaani-settings .sidebar row:focus,
+window.vaani-settings .sidebar row:focus-visible { outline: none; outline-width: 0; }
 window.vaani-settings separator { background-color: @v_border; min-width: 1px; min-height: 1px; }
 window.vaani-settings stack.pages, window.vaani-settings scrolledwindow, window.vaani-settings viewport {
   background-color: @v_bg;

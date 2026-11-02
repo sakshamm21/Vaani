@@ -121,6 +121,16 @@ impl History {
         Ok(())
     }
 
+    /// Delete all but the newest `keep` dictations. Returns how many were removed.
+    pub fn trim(&self, keep: usize) -> Result<usize, StoreError> {
+        let keep = i64::try_from(keep).unwrap_or(i64::MAX);
+        let n = self.db.execute(
+            "DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT ?1)",
+            params![keep],
+        )?;
+        Ok(n)
+    }
+
     pub fn clear(&self) -> Result<(), StoreError> {
         self.db.execute("DELETE FROM history", [])?;
         Ok(())
@@ -142,6 +152,19 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trim_keeps_newest() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = History::open(&dir.path().join("h.db")).unwrap();
+        for i in 0..5 {
+            h.add(&format!("t{i}"), "", "e", 1, "").unwrap();
+        }
+        assert_eq!(h.trim(2).unwrap(), 3);
+        let left: Vec<String> = h.recent(10).unwrap().into_iter().map(|e| e.text).collect();
+        assert_eq!(left, vec!["t4", "t3"]);
+        assert_eq!(h.trim(0).unwrap(), 2);
+    }
 
     #[test]
     fn add_list_mark_delete() {
