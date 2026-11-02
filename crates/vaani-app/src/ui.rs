@@ -41,7 +41,7 @@ pub fn run(shared: Arc<Shared>, ctrl: Sender<Input>, rx: Receiver<UiCmd>, show_s
     crate::style::ensure_fonts();
     // A window class of its own, not the app-menu entry's: taskbars such as Cinnamon's then
     // show the window's own icon, which follows Vaani's theme, instead of the menu icon.
-    glib::set_prgname(Some("vaani"));
+    glib::set_prgname(Some("Vaani"));
     glib::set_application_name("Vaani");
     if let Err(e) = gtk4::init() {
         tracing::error!("GTK could not start ({e}); running without overlay and settings");
