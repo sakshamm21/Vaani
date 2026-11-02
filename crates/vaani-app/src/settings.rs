@@ -246,7 +246,7 @@ impl Settings {
 
         stack.add_titled(&build_home(&inner), Some("home"), "Overview");
         stack.add_titled(&build_general(&inner), Some("general"), "General");
-        stack.add_titled(&build_speech(&inner), Some("speech"), "Speech model");
+        stack.add_titled(&build_speech(&inner), Some("speech"), "Speech Model");
         stack.add_titled(&build_cloud(&inner), Some("cloud"), "Cloud");
         stack.add_titled(&build_history(&inner), Some("history"), "History");
         stack.add_titled(&build_about(&inner), Some("about"), "About");
@@ -709,7 +709,7 @@ fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     hero.append(&inner.hero_progress);
     content.append(&hero);
 
-    group(&content, "Test area");
+    group(&content, "Test Area");
     let tryit = gtk4::Box::new(Orientation::Vertical, 6);
     tryit.add_css_class("tryit");
     let hint = label(
@@ -920,7 +920,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         ),
     ]));
 
-    group(&content, "Startup and privacy");
+    group(&content, "Startup and Privacy");
     let s5 = {
         let shared = shared.clone();
         switch(cfg.general.autostart, move |v| {
@@ -972,7 +972,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
 
 fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     let (sw, content) = page(
-        "Speech model",
+        "Speech Model",
         "Local models run entirely on this computer and work offline.",
     );
     let cfg = config(&inner.shared);
@@ -1037,7 +1037,7 @@ fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         ),
     ]));
 
-    group(&content, "Local models");
+    group(&content, "Local Models");
     content.append(&inner.models_box);
     sw
 }
@@ -1285,7 +1285,7 @@ fn build_about(_inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     });
     let gh = gtk4::LinkButton::with_label("https://github.com/sakshamm21/Vaani", "GitHub");
     content.append(&gtk4::Box::new(Orientation::Vertical, 8));
-    group(&content, "Files and help");
+    group(&content, "Files and Help");
     content.append(&card(&[
         row(
             "Diagnostics",

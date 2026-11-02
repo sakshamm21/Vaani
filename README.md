@@ -143,7 +143,7 @@ immediately.
 | Start Vaani when I log in | Adds or removes the autostart entry. |
 | History | How many dictations to keep: none, the last 20 (default), 100 or 1,000, or all. Older entries are deleted automatically. |
 
-**Speech model** chooses between local and cloud recognition, sets the language, and manages
+**Speech Model** chooses between local and cloud recognition, sets the language, and manages
 downloaded models.
 
 **Cloud** configures the provider, API key, model and endpoint for cloud recognition.
@@ -173,7 +173,7 @@ Vaani applies changes when the file is saved.
 | Whisper Large v3 | 1019 MB | 99 languages | Slow on CPU. |
 | SenseVoice Small | 155 MB | Chinese, English, Japanese, Korean, Cantonese | |
 
-Models are managed on the **Speech model** page, where you can download, select and delete
+Models are managed on the **Speech Model** page, where you can download, select and delete
 them. They can also be managed with `vaani models`. Models are stored in
 `~/.local/share/vaani/models`.
 
@@ -181,7 +181,7 @@ The active model stays loaded in a separate `vaani-worker` process so that trans
 starts immediately. The worker uses about 800 MB with Parakeet, and much less with the
 smaller models. If the worker crashes, Vaani restarts it.
 
-For Whisper and the cloud engines, set the spoken language under **Speech model → Language**,
+For Whisper and the cloud engines, set the spoken language under **Speech Model → Language**,
 or leave it on automatic detection. Parakeet detects its supported languages automatically.
 
 ## Cloud providers
@@ -195,7 +195,7 @@ or leave it on automatic detection. Parakeet detects its supported languages aut
 To use a cloud provider:
 
 1. Open **Cloud**, choose a provider, paste your API key and click **Save key**.
-2. Click **Use cloud engine**, or select **Cloud API** on the **Speech model** page.
+2. Click **Use cloud engine**, or select **Cloud API** on the **Speech Model** page.
 
 API keys are stored in the system keyring (GNOME Keyring or KWallet, through the Secret
 Service API). They are never written to the configuration file. Audio is sent to the provider
