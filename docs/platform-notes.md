@@ -1,6 +1,6 @@
 # Platform notes
 
-Findings from the spikes in `spikes/`. Each entry says what was tried, where, and what happened.
+Findings from early platform experiments (spikes, since removed from the repo). Each entry says what was tried, where, and what happened.
 "Container" means a headless Ubuntu 24.04 VM with Xvfb (and openbox as a window manager where
 noted); "Mint" means the owner's laptop (Linux Mint 22.3 Cinnamon, X11).
 

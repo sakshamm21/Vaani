@@ -5,3 +5,11 @@
 /models/*.onnx
 /models/*.bin
 .env
+# Local only
+/spikes
+*Build Plan*.md
+*.swp
+*~
+.idea/
+.vscode/
+.DS_Store
