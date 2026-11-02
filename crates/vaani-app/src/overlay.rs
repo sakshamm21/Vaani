@@ -13,8 +13,8 @@ use gtk4::{cairo, gdk};
 use vaani_core::state::State;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, PropMode,
-    StackMode,
+    AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConfigureWindowAux,
+    ConnectionExt as _, EventMask, PropMode, StackMode,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -425,42 +425,54 @@ pub fn center_window(w: &gtk4::Window) {
         return;
     };
     let scale = w.scale_factor().max(1);
-    let (ww, wh) = (
-        w.width().max(w.default_width()) * scale,
-        w.height().max(w.default_height()) * scale,
-    );
+    // The X window includes the shadow GTK draws around client-side decorations, so use its
+    // real size rather than the widget size.
+    let (ww, wh) = c
+        .get_geometry(id)
+        .ok()
+        .and_then(|r| r.reply().ok())
+        .filter(|g| g.width > 1)
+        .map(|g| (i32::from(g.width), i32::from(g.height)))
+        .unwrap_or((
+            w.width().max(w.default_width()) * scale,
+            w.height().max(w.default_height()) * scale,
+        ));
     let (mx, my, mw, mh) = pointer_monitor(&c, w);
     let x = mx + ((mw - ww) / 2).max(0);
     let y = my + ((mh - wh) / 2).max(0);
-    // Tell the window manager this position was chosen on purpose (USPosition | PPosition),
-    // so it doesn't apply its own placement, then move there.
-    let wm_normal_hints: u32 = AtomEnum::WM_NORMAL_HINTS.into();
-    let wm_size_hints: u32 = AtomEnum::WM_SIZE_HINTS.into();
-    let mut hints = [0u32; 18];
-    hints[0] = 1 | 4;
-    hints[1] = x as u32;
-    hints[2] = y as u32;
-    hints[3] = ww as u32;
-    hints[4] = wh as u32;
-    let _ = c.change_property32(
-        PropMode::REPLACE,
-        id,
-        wm_normal_hints,
-        wm_size_hints,
-        &hints,
-    );
+    tracing::debug!(x, y, ww, wh, "centring settings window");
+    // Ask the window manager through EWMH (honoured by Muffin, Mutter, KWin, Xfwm, Openbox),
+    // and move the window directly too for window managers without it.
+    let root = c.setup().roots.first().map(|s| s.root).unwrap_or(0);
+    if let Ok(atom) = c
+        .intern_atom(false, b"_NET_MOVERESIZE_WINDOW")
+        .map_err(|_| ())
+        .and_then(|r| r.reply().map_err(|_| ()))
+    {
+        // Static gravity, x and y given, request from a pager/user (source 2).
+        let flags: u32 = 10 | (1 << 8) | (1 << 9) | (2 << 12);
+        let ev = ClientMessageEvent::new(32, id, atom.atom, [flags, x as u32, y as u32, 0, 0]);
+        let _ = c.send_event(
+            false,
+            root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            ev,
+        );
+    }
     let _ = c.configure_window(id, &ConfigureWindowAux::new().x(x).y(y));
     let _ = c.flush();
 }
 
 /// Centre `w` when it is shown, and once more after the window manager has placed it.
 pub fn keep_centered_on_open(w: &gtk4::Window) {
-    w.connect_realize(center_window);
     w.connect_map(|w| {
         center_window(w);
-        let w = w.clone();
-        gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-            center_window(&w);
-        });
+        // The window manager places the window after it is mapped; move it again once it has.
+        for ms in [120, 400] {
+            let w = w.clone();
+            gtk4::glib::timeout_add_local_once(Duration::from_millis(ms), move || {
+                center_window(&w);
+            });
+        }
     });
 }
