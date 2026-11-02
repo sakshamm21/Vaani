@@ -10,7 +10,7 @@ kind = "nemo_transducer"
 archive = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 download_mb = 465
 languages = "English and 24 European languages"
-notes = "Best accuracy and speed on CPU. Recommended."
+notes = "Best accuracy and speed on CPU."
 recommended = true
 
 [[model]]

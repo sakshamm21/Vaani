@@ -224,11 +224,11 @@ impl Overlay {
                 }
             }
             Mode::Processing => {
-                self.label.set_text("thinking…");
+                self.label.set_text("Transcribing");
                 self.hint.set_visible(false);
             }
             Mode::Done => {
-                self.label.set_text("done");
+                self.label.set_text("Inserted");
                 self.hint.set_visible(false);
             }
         }
@@ -268,35 +268,8 @@ fn place(c: &RustConnection, w: &gtk4::Window, id: u32) {
     if id == 0 {
         return;
     }
-    let root = c.setup().roots.first().map(|s| s.root).unwrap_or(0);
-    let (px, py) = c
-        .query_pointer(root)
-        .ok()
-        .and_then(|r| r.reply().ok())
-        .map(|r| (i32::from(r.root_x), i32::from(r.root_y)))
-        .unwrap_or((0, 0));
+    let (mx, my, mw, mh) = pointer_monitor(c, w);
     let scale = w.scale_factor().max(1);
-    let display = gtk4::prelude::WidgetExt::display(w);
-    let monitors = display.monitors();
-    let mut geo = None;
-    for i in 0..monitors.n_items() {
-        if let Some(m) = monitors.item(i).and_downcast::<gdk::Monitor>() {
-            let g = m.geometry();
-            let (x, y, ww, hh) = (
-                g.x() * scale,
-                g.y() * scale,
-                g.width() * scale,
-                g.height() * scale,
-            );
-            if geo.is_none() || (px >= x && px < x + ww && py >= y && py < y + hh) {
-                geo = Some((x, y, ww, hh));
-                if px >= x && px < x + ww && py >= y && py < y + hh {
-                    break;
-                }
-            }
-        }
-    }
-    let (mx, my, mw, mh) = geo.unwrap_or((0, 0, 1920, 1080));
     let x = mx + (mw - W * scale) / 2;
     let y = my + mh - (H + MARGIN_BOTTOM) * scale;
     let _ = c.configure_window(
@@ -405,4 +378,60 @@ fn gradient(t: f64) -> (f64, f64, f64) {
     } else {
         lerp(b, c, (t - 0.5) * 2.0)
     }
+}
+
+/// Geometry (x, y, width, height in device pixels) of the monitor the mouse pointer is on.
+pub fn pointer_monitor(c: &RustConnection, w: &gtk4::Window) -> (i32, i32, i32, i32) {
+    let root = c.setup().roots.first().map(|s| s.root).unwrap_or(0);
+    let (px, py) = c
+        .query_pointer(root)
+        .ok()
+        .and_then(|r| r.reply().ok())
+        .map(|r| (i32::from(r.root_x), i32::from(r.root_y)))
+        .unwrap_or((0, 0));
+    let scale = w.scale_factor().max(1);
+    let display = gtk4::prelude::WidgetExt::display(w);
+    let monitors = display.monitors();
+    let mut geo = None;
+    for i in 0..monitors.n_items() {
+        if let Some(m) = monitors.item(i).and_downcast::<gdk::Monitor>() {
+            let g = m.geometry();
+            let (x, y, ww, hh) = (
+                g.x() * scale,
+                g.y() * scale,
+                g.width() * scale,
+                g.height() * scale,
+            );
+            if geo.is_none() || (px >= x && px < x + ww && py >= y && py < y + hh) {
+                geo = Some((x, y, ww, hh));
+                if px >= x && px < x + ww && py >= y && py < y + hh {
+                    break;
+                }
+            }
+        }
+    }
+    geo.unwrap_or((0, 0, 1920, 1080))
+}
+
+/// Move a normal (window-manager managed) window to the centre of the monitor under the
+/// pointer. GTK 4 has no API for this on X11, and some window managers (Cinnamon among them)
+/// otherwise place new windows at the top left.
+pub fn center_window(w: &gtk4::Window) {
+    let Some(surface) = w.surface().and_downcast::<gdk4_x11::X11Surface>() else {
+        return;
+    };
+    let id = surface.xid() as u32;
+    let Ok((c, _)) = x11rb::connect(None) else {
+        return;
+    };
+    let scale = w.scale_factor().max(1);
+    let (ww, wh) = (
+        w.width().max(w.default_width()) * scale,
+        w.height().max(w.default_height()) * scale,
+    );
+    let (mx, my, mw, mh) = pointer_monitor(&c, w);
+    let x = mx + ((mw - ww) / 2).max(0);
+    let y = my + ((mh - wh) / 2).max(0);
+    let _ = c.configure_window(id, &ConfigureWindowAux::new().x(x).y(y));
+    let _ = c.flush();
 }

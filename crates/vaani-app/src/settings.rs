@@ -68,7 +68,6 @@ struct Inner {
     hero_progress: gtk4::ProgressBar,
     stat_n: gtk4::Label,
     stat_w: gtk4::Label,
-    stat_t: gtk4::Label,
     // Speech
     models_box: gtk4::Box,
     model_rows: RefCell<HashMap<String, ModelRow>>,
@@ -229,7 +228,6 @@ impl Settings {
             hero_progress: gtk4::ProgressBar::new(),
             stat_n: label("0", "stat-num"),
             stat_w: label("0", "stat-num"),
-            stat_t: label("0", "stat-num"),
             models_box: gtk4::Box::new(Orientation::Vertical, 0),
             model_rows: RefCell::new(HashMap::new()),
             downloads: RefCell::new(HashMap::new()),
@@ -246,7 +244,7 @@ impl Settings {
             last_history_top: RefCell::new(-1),
         });
 
-        stack.add_titled(&build_home(&inner), Some("home"), "Home");
+        stack.add_titled(&build_home(&inner), Some("home"), "Overview");
         stack.add_titled(&build_general(&inner), Some("general"), "General");
         stack.add_titled(&build_speech(&inner), Some("speech"), "Speech model");
         stack.add_titled(&build_cloud(&inner), Some("cloud"), "Cloud");
@@ -290,6 +288,7 @@ impl Settings {
         if let Ok(p) = std::env::var("VAANI_PAGE") {
             s.inner.stack.set_visible_child_name(&p);
         }
+        window.connect_map(crate::overlay::center_window);
         window.present();
         s
     }
@@ -421,12 +420,12 @@ impl Settings {
         };
         match i.shared.engine() {
             EngineStatus::Ready(name) => {
-                i.hero_title.set_text("Vaani is ready");
+                i.hero_title.set_text("Ready");
                 i.hero_sub.set_text(&how);
                 i.hero_badge.set_text(&name);
             }
             EngineStatus::Loading(name) => {
-                i.hero_title.set_text("Getting ready…");
+                i.hero_title.set_text("Loading model");
                 i.hero_sub
                     .set_text(&format!("Loading {name}. This takes a few seconds."));
                 i.hero_badge.set_text("loading");
@@ -434,9 +433,9 @@ impl Settings {
             }
             EngineStatus::Missing(what) if cfg.engine.kind == EngineKind::Local => {
                 i.hero_title.set_text(if downloading {
-                    "Downloading your speech model…"
+                    "Downloading speech model"
                 } else {
-                    "One step left: download a speech model"
+                    "Speech model required"
                 });
                 let size = vaani_models::find(&cfg.engine.local_model)
                     .map(|m| m.download_mb)
@@ -452,7 +451,7 @@ impl Settings {
                 }
             }
             EngineStatus::Missing(what) => {
-                i.hero_title.set_text("Add your API key");
+                i.hero_title.set_text("API key required");
                 i.hero_sub.set_text(&format!(
                     "The cloud engine needs a {what}. Open the Cloud page to add it."
                 ));
@@ -460,7 +459,7 @@ impl Settings {
                 i.hero_badge.add_css_class("accent");
             }
             EngineStatus::Failed(e) => {
-                i.hero_title.set_text("The speech engine has a problem");
+                i.hero_title.set_text("Speech engine error");
                 i.hero_sub.set_text(&e);
                 i.hero_badge.set_text("error");
             }
@@ -470,13 +469,6 @@ impl Settings {
             .unwrap_or((0, 0));
         i.stat_n.set_text(&n.to_string());
         i.stat_w.set_text(&words.to_string());
-        // Typing averages about 40 words a minute; speaking is roughly three times faster.
-        let saved = (words as f64 / 40.0 - words as f64 / 130.0).max(0.0);
-        i.stat_t.set_text(&if saved < 60.0 {
-            format!("{saved:.0}m")
-        } else {
-            format!("{:.1}h", saved / 60.0)
-        });
         i.key_label.set_text(&key);
         i.home_key.set_text(&key);
     }
@@ -555,7 +547,7 @@ impl Settings {
                 right.append(&rm);
             }
         } else {
-            let dl_btn = gtk4::Button::with_label(&format!("Download · {} MB", m.download_mb));
+            let dl_btn = gtk4::Button::with_label(&format!("Download ({} MB)", m.download_mb));
             let model = m.clone();
             let weak = Rc::downgrade(&self.inner);
             dl_btn.connect_clicked(move |_| {
@@ -571,7 +563,7 @@ impl Settings {
 
         let title = m.name.clone();
         if m.recommended {
-            let star = label("★ top pick", "badge");
+            let star = label("Recommended", "badge");
             star.add_css_class("star");
             right.prepend(&star);
         }
@@ -660,7 +652,7 @@ impl Settings {
         if shown == 0 {
             let empty = label(
                 if query.is_empty() {
-                    "Your dictations will show up here."
+                    "No dictations yet."
                 } else {
                     "No matches."
                 },
@@ -683,7 +675,7 @@ fn open_history() -> Option<vaani_store::History> {
 // ---------- pages ----------
 
 fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
-    let (sw, content) = page("Speak, don't type.", "");
+    let (sw, content) = page("Overview", "");
     let hero = gtk4::Box::new(Orientation::Vertical, 8);
     hero.add_css_class("hero");
     let top = gtk4::Box::new(Orientation::Horizontal, 10);
@@ -717,11 +709,11 @@ fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     hero.append(&inner.hero_progress);
     content.append(&hero);
 
-    group(&content, "Try it here");
+    group(&content, "Test area");
     let tryit = gtk4::Box::new(Orientation::Vertical, 6);
     tryit.add_css_class("tryit");
     let hint = label(
-        "Click in the box, then hold your shortcut and speak.",
+        "Click in the box below, then hold your shortcut and speak.",
         "row-sub",
     );
     hint.set_margin_start(14);
@@ -738,7 +730,7 @@ fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     tryit.append(&tv);
     content.append(&tryit);
 
-    group(&content, "Your shortcut");
+    group(&content, "Shortcut");
     let keybox = gtk4::Box::new(Orientation::Horizontal, 8);
     keybox.append(&inner.home_key);
     let change = gtk4::Button::with_label("Change");
@@ -752,13 +744,12 @@ fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         "Works in every app: browsers, editors, chat apps and terminals.",
         &keybox,
     )]));
-    group(&content, "Your stats");
+    group(&content, "Usage");
     let tiles = gtk4::Box::new(Orientation::Horizontal, 12);
     tiles.set_homogeneous(true);
     for (num, cls, what) in [
         (&inner.stat_n, "c1", "dictations"),
-        (&inner.stat_w, "c2", "words spoken"),
-        (&inner.stat_t, "c3", "typing time saved"),
+        (&inner.stat_w, "c2", "words"),
     ] {
         let t = gtk4::Box::new(Orientation::Vertical, 2);
         t.add_css_class("stat");
@@ -793,7 +784,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     }
     content.append(&card(&[row(
         "Theme",
-        "Soft rose in light or dark. The sun / moon button at the top switches it too.",
+        "Light, dark, or follow the system setting.",
         &inner.theme_drop,
     )]));
 
@@ -893,12 +884,12 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     content.append(&card(&[
         row(
             "Sounds",
-            "A soft beep when dictation starts and stops.",
+            "Play a short tone when dictation starts and stops.",
             &s1,
         ),
         row(
             "Floating pill",
-            "Shows a small recording indicator at the bottom of the screen.",
+            "Show a recording indicator at the bottom of the screen.",
             &s2,
         ),
     ]));
@@ -919,12 +910,12 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     content.append(&card(&[
         row(
             "Remove filler words",
-            "Drops \"um\", \"uh\" and similar.",
+            "Remove \"um\", \"uh\" and similar words.",
             &s3,
         ),
         row(
             "Add a space after each dictation",
-            "So the next dictation doesn't run into this one.",
+            "Keeps consecutive dictations separated.",
             &s4,
         ),
     ]));
@@ -946,7 +937,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         row("Start Vaani when I log in", "", &s5),
         row(
             "Don't keep history",
-            "Dictations are pasted but not saved.",
+            "Dictations are inserted but not saved.",
             &s6,
         ),
     ]));
@@ -956,7 +947,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
 fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     let (sw, content) = page(
         "Speech model",
-        "Models run on this computer: private, offline and free. Download as many as you like and switch any time.",
+        "Local models run entirely on this computer and work offline.",
     );
     let cfg = config(&inner.shared);
     let shared = inner.shared.clone();
@@ -1227,7 +1218,7 @@ fn build_about(_inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     if let Some(first) = content.first_child() {
         content.remove(&first);
     }
-    let title = label("vaani", "about-logo");
+    let title = label("Vaani", "about-logo");
     content.append(&title);
     content.append(&label(
         &format!(

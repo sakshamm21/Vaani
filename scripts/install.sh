@@ -57,6 +57,7 @@ sleep 0.5
 mkdir -p "$BIN" "$SHARE/applications" "$SHARE/icons/hicolor/scalable/apps" "$SHARE/fonts/vaani"
 install -m755 target/release/vaani target/release/vaani-worker "$BIN/"
 install -m644 assets/icons/$ID.svg "$SHARE/icons/hicolor/scalable/apps/$ID.svg"
+rm -f "$SHARE/fonts/vaani/"*.ttf
 install -m644 assets/fonts/*.ttf "$SHARE/fonts/vaani/"
 sed "s|^Exec=vaani|Exec=$BIN/vaani|" assets/$ID.desktop > "$SHARE/applications/$ID.desktop"
 fc-cache -f "$SHARE/fonts/vaani" >/dev/null 2>&1 || true

@@ -75,11 +75,6 @@ impl ksni::Tray for VaaniTray {
                 } else {
                     "Start dictation".into()
                 },
-                icon_name: if recording {
-                    "media-playback-stop".into()
-                } else {
-                    "audio-input-microphone".into()
-                },
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.tx.send(Input::Cmd(Command::Toggle));
                 }),
@@ -88,7 +83,6 @@ impl ksni::Tray for VaaniTray {
             .into(),
             StandardItem {
                 label: "Paste last dictation".into(),
-                icon_name: "edit-paste".into(),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.tx.send(Input::PasteLast);
                 }),
@@ -98,14 +92,12 @@ impl ksni::Tray for VaaniTray {
             MenuItem::Separator,
             StandardItem {
                 label: "Settings…".into(),
-                icon_name: "preferences-system".into(),
                 activate: Box::new(|_| crate::ui::request_settings()),
                 ..Default::default()
             }
             .into(),
             StandardItem {
                 label: "Quit Vaani".into(),
-                icon_name: "application-exit".into(),
                 activate: Box::new(|_| crate::ui::request_quit()),
                 ..Default::default()
             }
