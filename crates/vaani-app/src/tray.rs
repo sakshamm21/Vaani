@@ -45,7 +45,7 @@ impl ksni::Tray for VaaniTray {
     fn icon_name(&self) -> String {
         match self.shared.state() {
             State::Recording => "media-record".into(),
-            _ => crate::keys::APP_ICON.into(),
+            _ => crate::keys::app_icon().into(),
         }
     }
     fn tool_tip(&self) -> ksni::ToolTip {

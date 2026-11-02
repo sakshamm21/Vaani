@@ -57,8 +57,7 @@ cargo build --release -p vaani-app -p vaani-worker
 sleep 0.5
 mkdir -p "$BIN" "$SHARE/applications" "$SHARE/icons/hicolor/scalable/apps" "$SHARE/fonts/vaani"
 install -m755 target/release/vaani target/release/vaani-worker "$BIN/"
-install -m644 assets/icons/$ID.svg "$SHARE/icons/hicolor/scalable/apps/"
-rm -f "$SHARE/icons/hicolor/scalable/apps/$ID-dark.svg"
+install -m644 assets/icons/$ID.svg assets/icons/$ID-dark.svg "$SHARE/icons/hicolor/scalable/apps/"
 rm -f "$SHARE/fonts/vaani/"*.ttf
 install -m644 assets/fonts/*.ttf "$SHARE/fonts/vaani/"
 sed "s|^Exec=vaani|Exec=$BIN/vaani|" assets/$ID.desktop > "$SHARE/applications/$ID.desktop"

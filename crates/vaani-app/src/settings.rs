@@ -96,16 +96,12 @@ fn config_path() -> Option<std::path::PathBuf> {
     vaani_core::paths::config_file()
 }
 
-/// Change the config, save it, and update the shared copy so the UI stays consistent.
-/// The header button shows the mode the window is in now: a moon in dark mode, a sun in light.
+/// The header button shows the mode a click switches to: a sun in dark mode, a moon in light.
 fn set_theme_icon(btn: &gtk4::Button) {
     let (icon, tip) = if crate::style::is_dark() {
-        (
-            "weather-clear-night-symbolic",
-            "Dark mode. Click for light mode.",
-        )
+        ("weather-clear-symbolic", "Switch to light mode")
     } else {
-        ("weather-clear-symbolic", "Light mode. Click for dark mode.")
+        ("weather-clear-night-symbolic", "Switch to dark mode")
     };
     if btn.icon_name().as_deref() != Some(icon) {
         btn.set_icon_name(icon);
@@ -113,6 +109,7 @@ fn set_theme_icon(btn: &gtk4::Button) {
     }
 }
 
+/// Change the config, save it, and update the shared copy so the UI stays consistent.
 fn update_config(shared: &Shared, f: impl FnOnce(&mut Config)) {
     let mut c = shared.config.lock().map(|c| c.clone()).unwrap_or_default();
     f(&mut c);
@@ -221,7 +218,7 @@ impl Settings {
             .title("Vaani")
             .default_width(900)
             .default_height(640)
-            .icon_name(crate::keys::APP_ICON)
+            .icon_name(crate::keys::app_icon())
             .build();
         window.add_css_class("vaani-settings");
         let header = gtk4::HeaderBar::new();
@@ -254,7 +251,7 @@ impl Settings {
             capture_button: gtk4::Button::with_label("Change…"),
             theme_drop: gtk4::DropDown::from_strings(&["Match my desktop", "Light", "Dark"]),
             theme_btn: gtk4::Button::new(),
-            about_logo: gtk4::Image::from_icon_name(crate::keys::APP_ICON),
+            about_logo: gtk4::Image::from_icon_name(crate::keys::app_icon()),
             history_list: gtk4::ListBox::new(),
             history_search: gtk4::SearchEntry::new(),
             last_status: RefCell::new(None),
@@ -321,6 +318,13 @@ impl Settings {
 
     fn sync_theme_button(&self) {
         set_theme_icon(&self.inner.theme_btn);
+        let logo = crate::keys::app_icon();
+        if self.inner.window.icon_name().as_deref() != Some(logo) {
+            self.inner.window.set_icon_name(Some(logo));
+        }
+        if self.inner.about_logo.icon_name().as_deref() != Some(logo) {
+            self.inner.about_logo.set_icon_name(Some(logo));
+        }
     }
 
     /// Still downloading something, so keep the state around after the window closes.
