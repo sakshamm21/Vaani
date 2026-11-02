@@ -9,3 +9,4 @@ Terminal=false
 Categories=Utility;Accessibility;AudioVideo;
 Keywords=dictation;voice;speech;transcribe;whisper;parakeet;
 StartupNotify=false
+StartupWMClass=io.github.sakshamm21.Vaani

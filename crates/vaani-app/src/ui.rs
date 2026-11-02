@@ -39,6 +39,9 @@ pub fn channel() -> Receiver<UiCmd> {
 /// Run the GTK main loop until asked to quit.
 pub fn run(shared: Arc<Shared>, ctrl: Sender<Input>, rx: Receiver<UiCmd>, show_settings: bool) {
     crate::style::ensure_fonts();
+    // WM_CLASS, so the taskbar matches windows to the app-menu entry and its icon.
+    glib::set_prgname(Some(crate::keys::APP_ICON));
+    glib::set_application_name("Vaani");
     if let Err(e) = gtk4::init() {
         tracing::error!("GTK could not start ({e}); running without overlay and settings");
         // Still block until quit so dictation keeps working.

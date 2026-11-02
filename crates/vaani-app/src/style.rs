@@ -308,7 +308,7 @@ window.vaani-settings switch slider, window.vaani-settings switch:checked slider
   min-width: 20px; min-height: 20px; margin: 0;
   border: none; outline: none; box-shadow: 0 2px 4px rgba(0,0,0,0.4);
 }
-window.vaani-settings switch image { color: transparent; -gtk-icon-size: 0; }
+window.vaani-settings switch image { color: transparent; opacity: 0; }
 
 /* radios */
 window.vaani-settings checkbutton { color: @v_fg; font-weight: 600; }
