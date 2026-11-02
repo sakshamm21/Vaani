@@ -383,6 +383,7 @@ pub fn apply(theme: Theme) {
         Theme::Dark => true,
     };
     DARK.store(dark, Ordering::Relaxed);
+    sync_menu_icon(dark);
     if let Some(s) = gtk4::Settings::default() {
         // Same base on every distro: GTK's own theme, painted with our palette.
         s.set_gtk_theme_name(Some("Adwaita"));
@@ -407,4 +408,46 @@ pub fn apply(theme: Theme) {
         }
     });
     APPLIED.with(|a| a.set(Some(theme)));
+}
+
+/// Cinnamon and most other panels take a window's taskbar icon from its app-menu entry
+/// (matched by WM_CLASS), not from the window. Point that entry at the logo variant for the
+/// current theme so the taskbar matches. Only touches the per-user entry the installer made.
+fn sync_menu_icon(dark: bool) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let path = PathBuf::from(home)
+        .join(".local/share/applications")
+        .join(format!("{}.desktop", crate::keys::APP_ICON));
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let want = format!(
+        "Icon={}",
+        if dark {
+            crate::keys::APP_ICON_DARK
+        } else {
+            crate::keys::APP_ICON
+        }
+    );
+    if text.lines().any(|l| l == want) {
+        return;
+    }
+    let new: String = text
+        .lines()
+        .map(|l| {
+            if l.starts_with("Icon=") {
+                want.as_str()
+            } else {
+                l
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let tmp = path.with_extension("desktop.tmp");
+    if std::fs::write(&tmp, new).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
 }
