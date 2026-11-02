@@ -1,6 +1,6 @@
 [package]
 name = "vaani-app"
-description = "The Vaani app: daemon, D-Bus service, CLI and (later) GTK overlay, tray and settings"
+description = "The Vaani app: background service, overlay, tray, settings and CLI"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,8 +15,16 @@ path = "src/main.rs"
 [dependencies]
 vaani-core.workspace = true
 vaani-platform.workspace = true
+vaani-audio.workspace = true
+vaani-stt.workspace = true
+vaani-text.workspace = true
+vaani-hotkey.workspace = true
+vaani-inject.workspace = true
+vaani-store.workspace = true
+vaani-models.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+crossbeam-channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -1,43 +1,34 @@
 //! The D-Bus service the running app owns, and the client side used by CLI commands.
 //!
-//! Owning the well-known name is also how we stay single-instance: a second `vaani run`
-//! finds the name taken and exits.
+//! Owning the well-known name is also how we stay single-instance.
 
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
+use crossbeam_channel::Sender;
 use tokio::sync::Notify;
-use vaani_core::state::{Command, Effect, Machine};
+use vaani_core::state::Command;
+
+use crate::controller::{EngineStatus, Input, Shared};
 
 pub struct Service {
-    machine: Arc<Mutex<Machine>>,
+    tx: Sender<Input>,
+    shared: Arc<Shared>,
     quit: Arc<Notify>,
 }
 
 impl Service {
-    pub fn new(machine: Arc<Mutex<Machine>>, quit: Arc<Notify>) -> Self {
-        Self { machine, quit }
+    pub fn new(tx: Sender<Input>, shared: Arc<Shared>, quit: Arc<Notify>) -> Self {
+        Self { tx, shared, quit }
     }
 
     fn apply(&self, cmd: Command) -> String {
-        let Ok(mut m) = self.machine.lock() else {
-            return "error".into();
-        };
-        let effect = m.handle(cmd);
-        // M0 has no audio pipeline yet: log what would happen and finish immediately.
-        match effect {
-            Effect::None => {}
-            Effect::StartCapture => tracing::info!("dictation started (no audio yet in M0)"),
-            Effect::StopCaptureAndProcess => {
-                tracing::info!("dictation finished (no pipeline yet in M0)");
-                m.handle(Command::Finished);
-            }
-            Effect::DiscardCapture | Effect::AbortProcessing => {
-                tracing::info!("dictation cancelled");
-            }
-        }
-        m.state().to_string()
+        let _ = self.tx.send(Input::Cmd(cmd));
+        // Let the controller act so the reply shows the new state.
+        std::thread::sleep(Duration::from_millis(40));
+        self.shared.state().to_string()
     }
 }
 
@@ -57,10 +48,22 @@ impl Service {
         self.apply(Command::Cancel)
     }
     fn status(&self) -> String {
-        self.machine
-            .lock()
-            .map(|m| m.state().to_string())
-            .unwrap_or_else(|_| "error".into())
+        let engine = match self.shared.engine() {
+            EngineStatus::Ready(m) => format!("ready ({m})"),
+            EngineStatus::Loading(m) => format!("loading {m}"),
+            EngineStatus::Missing(m) => format!("model {m} not downloaded"),
+            EngineStatus::Failed(e) => format!("error: {e}"),
+        };
+        format!("{}; engine {engine}", self.shared.state())
+    }
+    fn paste_last(&self) {
+        let _ = self.tx.send(Input::PasteLast);
+    }
+    fn reload_engine(&self) {
+        let _ = self.tx.send(Input::ReloadEngine);
+    }
+    fn show_settings(&self) {
+        crate::ui::request_settings();
     }
     fn quit(&self) {
         tracing::info!("quit requested over D-Bus");
@@ -83,6 +86,9 @@ trait Vaani {
     fn stop(&self) -> zbus::Result<String>;
     fn cancel(&self) -> zbus::Result<String>;
     fn status(&self) -> zbus::Result<String>;
+    fn paste_last(&self) -> zbus::Result<()>;
+    fn reload_engine(&self) -> zbus::Result<()>;
+    fn show_settings(&self) -> zbus::Result<()>;
     fn quit(&self) -> zbus::Result<()>;
 }
 
@@ -93,12 +99,31 @@ pub enum Call {
     Stop,
     Cancel,
     Status,
+    PasteLast,
+    ReloadEngine,
+    ShowSettings,
     Quit,
 }
 
-/// Run one CLI command against the running app and print the resulting state.
+/// Run one CLI command against the running app and print the result.
 pub fn client_call(call: Call) -> Result<ExitCode> {
     crate::logging::init_cli();
+    match try_call(call) {
+        Ok(Some(out)) => {
+            println!("{out}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Ok(None) => Ok(ExitCode::SUCCESS),
+        Err(e) if e.downcast_ref::<zbus::Error>().is_some_and(is_not_running) => {
+            eprintln!("Vaani is not running. Start it with `vaani` (or from the app menu).");
+            Ok(ExitCode::from(3))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Call the running app; Ok(None) for calls with no output.
+pub fn try_call(call: Call) -> Result<Option<String>> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -107,26 +132,18 @@ pub fn client_call(call: Call) -> Result<ExitCode> {
             .await
             .context("could not connect to the D-Bus session bus")?;
         let proxy = VaaniProxy::new(&conn).await?;
-        let result = match call {
+        let r = match call {
             Call::Toggle => proxy.toggle().await.map(Some),
             Call::Start => proxy.start().await.map(Some),
             Call::Stop => proxy.stop().await.map(Some),
             Call::Cancel => proxy.cancel().await.map(Some),
             Call::Status => proxy.status().await.map(Some),
+            Call::PasteLast => proxy.paste_last().await.map(|()| None),
+            Call::ReloadEngine => proxy.reload_engine().await.map(|()| None),
+            Call::ShowSettings => proxy.show_settings().await.map(|()| None),
             Call::Quit => proxy.quit().await.map(|()| None),
         };
-        match result {
-            Ok(Some(state)) => {
-                println!("{state}");
-                Ok(ExitCode::SUCCESS)
-            }
-            Ok(None) => Ok(ExitCode::SUCCESS),
-            Err(e) if is_not_running(&e) => {
-                eprintln!("Vaani is not running. Start it with `vaani run`.");
-                Ok(ExitCode::from(3))
-            }
-            Err(e) => Err(e.into()),
-        }
+        Ok(r?)
     })
 }
 
@@ -153,23 +170,5 @@ fn is_not_running(e: &zbus::Error) -> bool {
             zbus::fdo::Error::ServiceUnknown(_) | zbus::fdo::Error::NameHasNoOwner(_)
         ),
         _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn service_applies_commands() {
-        let svc = Service::new(
-            Arc::new(Mutex::new(Machine::new())),
-            Arc::new(Notify::new()),
-        );
-        assert_eq!(svc.apply(Command::Toggle), "recording");
-        // M0 finishes processing immediately.
-        assert_eq!(svc.apply(Command::Toggle), "idle");
-        assert_eq!(svc.apply(Command::Start), "recording");
-        assert_eq!(svc.apply(Command::Cancel), "idle");
     }
 }

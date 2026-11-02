@@ -1,6 +1,6 @@
 [package]
 name = "vaani-audio"
-description = "Microphone capture, resampling, ring buffer and levels"
+description = "Microphone capture, resampling and levels"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,11 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+cpal.workspace = true
+rubato.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+hound.workspace = true
 
 [lints]
 workspace = true

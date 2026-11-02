@@ -1,6 +1,6 @@
 [package]
 name = "vaani-worker"
-description = "Inference process: loads local models and runs VAD and speech-to-text"
+description = "Inference process: loads local models and runs speech-to-text"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,9 @@ name = "vaani-worker"
 path = "src/main.rs"
 
 [dependencies]
+vaani-stt.workspace = true
+vaani-models.workspace = true
+sherpa-onnx.workspace = true
 
 [lints]
 workspace = true
