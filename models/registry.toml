@@ -1,0 +1,111 @@
+# Catalogue of local speech-to-text models Vaani can download and run.
+# Adding a model is one [[model]] entry. `archive` is a sherpa-onnx release asset name
+# (https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) unless `url` is given.
+# `kind` picks the engine: nemo_transducer, whisper, moonshine, sense_voice.
+
+[[model]]
+id = "parakeet-tdt-0.6b-v3"
+name = "Parakeet TDT 0.6B v3"
+kind = "nemo_transducer"
+archive = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+download_mb = 465
+languages = "English and 24 European languages"
+notes = "Best accuracy and speed on CPU. Recommended."
+recommended = true
+
+[[model]]
+id = "parakeet-tdt-0.6b-v2"
+name = "Parakeet TDT 0.6B v2"
+kind = "nemo_transducer"
+archive = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+download_mb = 460
+languages = "English"
+notes = "English-only predecessor of v3."
+
+[[model]]
+id = "moonshine-tiny-en"
+name = "Moonshine Tiny"
+kind = "moonshine"
+archive = "sherpa-onnx-moonshine-tiny-en-int8"
+download_mb = 103
+languages = "English"
+notes = "Smallest and fastest. Good for low-end laptops."
+
+[[model]]
+id = "moonshine-base-en"
+name = "Moonshine Base"
+kind = "moonshine"
+archive = "sherpa-onnx-moonshine-base-en-int8"
+download_mb = 240
+languages = "English"
+notes = "Fast, more accurate than Tiny."
+
+[[model]]
+id = "whisper-tiny"
+name = "Whisper Tiny"
+kind = "whisper"
+archive = "sherpa-onnx-whisper-tiny"
+download_mb = 111
+languages = "99 languages, including Hindi"
+notes = "Tiny multilingual Whisper."
+
+[[model]]
+id = "whisper-base"
+name = "Whisper Base"
+kind = "whisper"
+archive = "sherpa-onnx-whisper-base"
+download_mb = 198
+languages = "99 languages, including Hindi"
+
+[[model]]
+id = "whisper-small"
+name = "Whisper Small"
+kind = "whisper"
+archive = "sherpa-onnx-whisper-small"
+download_mb = 610
+languages = "99 languages, including Hindi"
+notes = "Good multilingual balance."
+
+[[model]]
+id = "whisper-turbo"
+name = "Whisper Large v3 Turbo"
+kind = "whisper"
+archive = "sherpa-onnx-whisper-turbo"
+download_mb = 538
+languages = "99 languages, including Hindi"
+notes = "Best multilingual accuracy; slower on CPU."
+
+[[model]]
+id = "whisper-distil-large-v3.5"
+name = "Distil-Whisper Large v3.5"
+kind = "whisper"
+archive = "sherpa-onnx-whisper-distil-large-v3.5"
+download_mb = 504
+languages = "English"
+notes = "Large-model accuracy for English at lower cost."
+
+[[model]]
+id = "whisper-medium"
+name = "Whisper Medium"
+kind = "whisper"
+archive = "sherpa-onnx-whisper-medium"
+download_mb = 1842
+languages = "99 languages, including Hindi"
+
+[[model]]
+id = "whisper-large-v3"
+name = "Whisper Large v3"
+kind = "whisper"
+archive = "sherpa-onnx-whisper-large-v3"
+download_mb = 1019
+languages = "99 languages, including Hindi"
+notes = "Highest accuracy; needs a fast CPU."
+
+[[model]]
+id = "sense-voice"
+name = "SenseVoice Small"
+kind = "sense_voice"
+archive = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
+download_mb = 155
+languages = "Chinese, English, Japanese, Korean, Cantonese"
+notes = "Very fast multilingual model."

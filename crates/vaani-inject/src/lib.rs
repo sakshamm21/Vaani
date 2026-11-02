@@ -1,3 +1,601 @@
-//! Text insertion backends: XTest, clipboard, libei, virtual keyboard, IBus, uinput.
+//! Text insertion on X11: own the CLIPBOARD with our text, press Ctrl+V (Ctrl+Shift+V in
+//! terminals) through XTest, wait until the app has actually read the text, then put the
+//! user's previous clipboard back (every target, images included).
 //!
-//! Stub: filled in during a later milestone (see the build plan).
+//! X11 clipboards live in the owning process, so a background thread keeps serving the
+//! restored clipboard until someone copies something new.
+//!
+//! "Never lose words": if no app reads the text, it stays on the clipboard and the caller
+//! tells the user to paste it by hand.
+
+use std::collections::BTreeMap;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
+use x11rb::CURRENT_TIME;
+use x11rb::connection::{Connection, RequestConnection};
+use x11rb::protocol::Event;
+use x11rb::protocol::xproto::{
+    Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, SelectionNotifyEvent,
+    SelectionRequestEvent, Window, WindowClass,
+};
+use x11rb::protocol::xtest::ConnectionExt as _;
+use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
+
+#[derive(Debug, thiserror::Error)]
+pub enum InjectError {
+    #[error("cannot connect to the X server: {0}")]
+    Connect(String),
+    #[error("X11 error: {0}")]
+    X11(String),
+    #[error("the insertion thread stopped")]
+    Gone,
+}
+
+fn x<E: std::fmt::Display>(e: E) -> InjectError {
+    InjectError::X11(e.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// The focused app read our text after `after`.
+    Pasted {
+        after: Duration,
+        terminal: bool,
+        app: String,
+    },
+    /// Nobody read it; the text is left on the clipboard.
+    LeftOnClipboard { app: String },
+}
+
+enum Cmd {
+    Insert(String, Sender<Result<Outcome, InjectError>>),
+    SetClipboard(String),
+    FocusedApp(Sender<String>),
+}
+
+#[derive(Clone)]
+pub struct Injector {
+    tx: Sender<Cmd>,
+}
+
+impl Injector {
+    pub fn start() -> Result<Self, InjectError> {
+        let (tx, rx) = unbounded();
+        let (ready_tx, ready_rx) = bounded(1);
+        thread::Builder::new()
+            .name("inject".into())
+            .spawn(move || match Service::new() {
+                Ok(mut s) => {
+                    let _ = ready_tx.send(Ok(()));
+                    s.run(rx);
+                }
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                }
+            })
+            .map_err(x)?;
+        ready_rx.recv().map_err(|_| InjectError::Gone)??;
+        Ok(Self { tx })
+    }
+
+    /// Insert text into the focused app. Blocks until pasted or given up (about 1.5 s max).
+    pub fn insert(&self, text: &str) -> Result<Outcome, InjectError> {
+        let (tx, rx) = bounded(1);
+        self.tx
+            .send(Cmd::Insert(text.to_string(), tx))
+            .map_err(|_| InjectError::Gone)?;
+        rx.recv().map_err(|_| InjectError::Gone)?
+    }
+
+    /// Just put text on the clipboard (e.g. "copy" from history).
+    pub fn set_clipboard(&self, text: &str) {
+        let _ = self.tx.send(Cmd::SetClipboard(text.to_string()));
+    }
+
+    /// WM_CLASS of the focused window, lowercased (e.g. "firefox", "gnome-terminal").
+    pub fn focused_app(&self) -> String {
+        let (tx, rx) = bounded(1);
+        if self.tx.send(Cmd::FocusedApp(tx)).is_err() {
+            return String::new();
+        }
+        rx.recv_timeout(Duration::from_millis(500))
+            .unwrap_or_default()
+    }
+}
+
+/// target atom -> (property type, bytes)
+type Offer = BTreeMap<Atom, (Atom, Vec<u8>)>;
+
+struct Atoms {
+    clipboard: Atom,
+    targets: Atom,
+    timestamp: Atom,
+    multiple: Atom,
+    save_targets: Atom,
+    utf8: Atom,
+    text: Atom,
+    text_plain: Atom,
+    text_plain_utf8: Atom,
+    incr: Atom,
+    prop: Atom,
+    wm_class: Atom,
+}
+
+struct Service {
+    conn: RustConnection,
+    root: Window,
+    win: Window,
+    a: Atoms,
+    /// What we are serving right now while we own the clipboard.
+    offer: Offer,
+    owned: bool,
+    max_prop: usize,
+}
+
+const TERMINALS: &[&str] = &[
+    "terminal",
+    "konsole",
+    "kitty",
+    "alacritty",
+    "xterm",
+    "rxvt",
+    "tilix",
+    "terminator",
+    "wezterm",
+    "ghostty",
+    "foot",
+    "st-256color",
+    "guake",
+    "tilda",
+    "yakuake",
+    "terminology",
+    "sakura",
+    "tabby",
+    "contour",
+    "blackbox",
+    "ptyxis",
+    "warp",
+    "cool-retro-term",
+];
+
+fn is_terminal(class: &str) -> bool {
+    TERMINALS.iter().any(|t| class.contains(t))
+}
+
+impl Service {
+    fn new() -> Result<Self, InjectError> {
+        let (conn, screen) =
+            x11rb::connect(None).map_err(|e| InjectError::Connect(e.to_string()))?;
+        let root = conn.setup().roots[screen].root;
+        let atom = |n: &str| -> Result<Atom, InjectError> {
+            Ok(conn
+                .intern_atom(false, n.as_bytes())
+                .map_err(x)?
+                .reply()
+                .map_err(x)?
+                .atom)
+        };
+        let a = Atoms {
+            clipboard: atom("CLIPBOARD")?,
+            targets: atom("TARGETS")?,
+            timestamp: atom("TIMESTAMP")?,
+            multiple: atom("MULTIPLE")?,
+            save_targets: atom("SAVE_TARGETS")?,
+            utf8: atom("UTF8_STRING")?,
+            text: atom("TEXT")?,
+            text_plain: atom("text/plain")?,
+            text_plain_utf8: atom("text/plain;charset=utf-8")?,
+            incr: atom("INCR")?,
+            prop: atom("VAANI_SELECTION")?,
+            wm_class: AtomEnum::WM_CLASS.into(),
+        };
+        let win = conn.generate_id().map_err(x)?;
+        conn.create_window(
+            0,
+            win,
+            root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_ONLY,
+            0,
+            &CreateWindowAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+        )
+        .map_err(x)?;
+        conn.flush().map_err(x)?;
+        // Leave headroom under the request size limit for the property header.
+        let max_prop = conn.maximum_request_bytes().saturating_sub(64);
+        Ok(Self {
+            conn,
+            root,
+            win,
+            a,
+            offer: Offer::new(),
+            owned: false,
+            max_prop,
+        })
+    }
+
+    fn run(&mut self, rx: Receiver<Cmd>) {
+        loop {
+            match rx.try_recv() {
+                Ok(Cmd::Insert(text, reply)) => {
+                    let r = self.insert(&text);
+                    let _ = reply.send(r);
+                }
+                Ok(Cmd::SetClipboard(text)) => {
+                    let offer = self.text_offer(&text);
+                    let _ = self.own(offer);
+                }
+                Ok(Cmd::FocusedApp(reply)) => {
+                    let _ = reply.send(self.focused_class());
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => return,
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+            }
+            match self.conn.poll_for_event() {
+                Ok(Some(ev)) => {
+                    self.handle_background(ev);
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(3)),
+                Err(e) => {
+                    tracing::error!("clipboard service lost the X connection: {e}");
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Serve requests while idle; drop our offer when someone else copies.
+    fn handle_background(&mut self, ev: Event) {
+        match ev {
+            Event::SelectionRequest(req) => {
+                let _ = self.serve(&req);
+            }
+            Event::SelectionClear(c) if c.selection == self.a.clipboard => {
+                self.owned = false;
+                self.offer.clear();
+            }
+            _ => {}
+        }
+    }
+
+    fn text_offer(&self, text: &str) -> Offer {
+        let mut o = Offer::new();
+        let bytes = text.as_bytes().to_vec();
+        for t in [
+            self.a.utf8,
+            self.a.text_plain_utf8,
+            AtomEnum::STRING.into(),
+            self.a.text,
+            self.a.text_plain,
+        ] {
+            let ty = if t == self.a.text_plain_utf8 {
+                t
+            } else {
+                self.a.utf8
+            };
+            o.insert(t, (ty, bytes.clone()));
+        }
+        o
+    }
+
+    fn own(&mut self, offer: Offer) -> Result<(), InjectError> {
+        self.offer = offer;
+        self.conn
+            .set_selection_owner(self.win, self.a.clipboard, CURRENT_TIME)
+            .map_err(x)?;
+        let owner = self
+            .conn
+            .get_selection_owner(self.a.clipboard)
+            .map_err(x)?
+            .reply()
+            .map_err(x)?
+            .owner;
+        self.owned = owner == self.win;
+        Ok(())
+    }
+
+    fn insert(&mut self, text: &str) -> Result<Outcome, InjectError> {
+        let app = self.focused_class();
+        let terminal = is_terminal(&app);
+
+        // 1. Save the user's clipboard (or keep what we already serve for them).
+        let saved = if self.owned {
+            std::mem::take(&mut self.offer)
+        } else {
+            self.save_clipboard().unwrap_or_default()
+        };
+
+        // 2. Offer our text and press paste.
+        self.own(self.text_offer(text))?;
+        self.wait_modifiers_released();
+        let started = Instant::now();
+        self.send_paste(terminal)?;
+
+        // 3. Serve until the app has read the text (+150 ms for apps that ask several times).
+        let deadline = started + Duration::from_millis(1500);
+        let mut read_at: Option<Instant> = None;
+        while Instant::now() < deadline {
+            if read_at.is_some_and(|t| t.elapsed() > Duration::from_millis(150)) {
+                break;
+            }
+            match self.conn.poll_for_event().map_err(x)? {
+                Some(Event::SelectionRequest(req)) => {
+                    let served = self.serve(&req)?;
+                    if served && req.target != self.a.targets && req.target != self.a.timestamp {
+                        read_at.get_or_insert_with(Instant::now);
+                    }
+                }
+                Some(Event::SelectionClear(_)) => {
+                    // Someone copied during the paste; leave their content alone.
+                    self.owned = false;
+                    break;
+                }
+                Some(_) => {}
+                None => thread::sleep(Duration::from_millis(1)),
+            }
+        }
+
+        let Some(read_at) = read_at else {
+            tracing::warn!(%app, "no app read the dictated text; leaving it on the clipboard");
+            return Ok(Outcome::LeftOnClipboard { app });
+        };
+        let after = read_at.duration_since(started);
+
+        // 4. Put the old clipboard back.
+        if self.owned {
+            if saved.is_empty() {
+                self.offer.clear();
+                let _ = self
+                    .conn
+                    .set_selection_owner(x11rb::NONE, self.a.clipboard, CURRENT_TIME);
+                self.owned = false;
+            } else {
+                self.own(saved)?;
+            }
+            let _ = self.conn.flush();
+        }
+        Ok(Outcome::Pasted {
+            after,
+            terminal,
+            app,
+        })
+    }
+
+    /// Wait (up to 400 ms) until Shift/Ctrl/Alt/Super are physically up, so our Ctrl+V is not
+    /// turned into something else by a key the user is still holding.
+    fn wait_modifiers_released(&self) {
+        let end = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < end {
+            let mask = self
+                .conn
+                .query_pointer(self.root)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| u16::from(r.mask))
+                .unwrap_or(0);
+            // Shift 1, Control 4, Mod1 (Alt) 8, Mod4 (Super) 64
+            if mask & (1 | 4 | 8 | 64) == 0 {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn keycode(&self, sym: u32) -> Result<u8, InjectError> {
+        let setup = self.conn.setup();
+        let (min, max) = (setup.min_keycode, setup.max_keycode);
+        let map = self
+            .conn
+            .get_keyboard_mapping(min, max - min + 1)
+            .map_err(x)?
+            .reply()
+            .map_err(x)?;
+        let per = usize::from(map.keysyms_per_keycode).max(1);
+        map.keysyms
+            .chunks(per)
+            .position(|s| s.contains(&sym))
+            .map(|i| min + i as u8)
+            .ok_or_else(|| InjectError::X11(format!("no keycode for keysym 0x{sym:x}")))
+    }
+
+    fn send_paste(&self, terminal: bool) -> Result<(), InjectError> {
+        let mut keys = vec![self.keycode(0xffe3)?]; // Control_L
+        if terminal {
+            keys.push(self.keycode(0xffe1)?); // Shift_L
+        }
+        keys.push(self.keycode(0x76)?); // v
+        for &k in &keys {
+            self.conn
+                .xtest_fake_input(2, k, CURRENT_TIME, self.root, 0, 0, 0)
+                .map_err(x)?;
+        }
+        for &k in keys.iter().rev() {
+            self.conn
+                .xtest_fake_input(3, k, CURRENT_TIME, self.root, 0, 0, 0)
+                .map_err(x)?;
+        }
+        self.conn.flush().map_err(x)?;
+        Ok(())
+    }
+
+    fn serve(&self, req: &SelectionRequestEvent) -> Result<bool, InjectError> {
+        let property = if req.property == x11rb::NONE {
+            req.target
+        } else {
+            req.property
+        };
+        let ok = if req.selection != self.a.clipboard || !self.owned {
+            false
+        } else if req.target == self.a.targets {
+            let mut list = vec![self.a.targets, self.a.timestamp];
+            list.extend(self.offer.keys().copied());
+            self.conn
+                .change_property32(
+                    PropMode::REPLACE,
+                    req.requestor,
+                    property,
+                    AtomEnum::ATOM,
+                    &list,
+                )
+                .map_err(x)?;
+            true
+        } else if let Some((ty, data)) = self.offer.get(&req.target) {
+            if data.len() > self.max_prop {
+                false // would need INCR; rare for text, skipped
+            } else {
+                self.conn
+                    .change_property8(PropMode::REPLACE, req.requestor, property, *ty, data)
+                    .map_err(x)?;
+                true
+            }
+        } else {
+            false
+        };
+        let ev = SelectionNotifyEvent {
+            response_type: x11rb::protocol::xproto::SELECTION_NOTIFY_EVENT,
+            sequence: 0,
+            time: req.time,
+            requestor: req.requestor,
+            selection: req.selection,
+            target: req.target,
+            property: if ok { property } else { x11rb::NONE },
+        };
+        self.conn
+            .send_event(false, req.requestor, EventMask::NO_EVENT, ev)
+            .map_err(x)?;
+        self.conn.flush().map_err(x)?;
+        Ok(ok)
+    }
+
+    fn fetch(&self, target: Atom) -> Result<Option<(Atom, Vec<u8>, u8)>, InjectError> {
+        self.conn
+            .convert_selection(
+                self.win,
+                self.a.clipboard,
+                target,
+                self.a.prop,
+                CURRENT_TIME,
+            )
+            .map_err(x)?;
+        self.conn.flush().map_err(x)?;
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            match self.conn.poll_for_event().map_err(x)? {
+                Some(Event::SelectionNotify(n)) if n.target == target => {
+                    if n.property == x11rb::NONE {
+                        return Ok(None);
+                    }
+                    let r = self
+                        .conn
+                        .get_property(true, self.win, self.a.prop, AtomEnum::ANY, 0, u32::MAX / 4)
+                        .map_err(x)?
+                        .reply()
+                        .map_err(x)?;
+                    if r.type_ == self.a.incr {
+                        return Ok(None); // large item (e.g. big image); not preserved
+                    }
+                    return Ok(Some((r.type_, r.value, r.format)));
+                }
+                Some(_) => {}
+                None => thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        Ok(None)
+    }
+
+    fn save_clipboard(&self) -> Result<Offer, InjectError> {
+        let mut saved = Offer::new();
+        let owner = self
+            .conn
+            .get_selection_owner(self.a.clipboard)
+            .map_err(x)?
+            .reply()
+            .map_err(x)?
+            .owner;
+        if owner == x11rb::NONE {
+            return Ok(saved);
+        }
+        let Some((_, raw, 32)) = self.fetch(self.a.targets)? else {
+            return Ok(saved);
+        };
+        let skip = [
+            self.a.targets,
+            self.a.timestamp,
+            self.a.multiple,
+            self.a.save_targets,
+        ];
+        for t in raw
+            .chunks_exact(4)
+            .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+            .filter(|t| !skip.contains(t))
+        {
+            if let Some((ty, data, 8)) = self.fetch(t)? {
+                saved.insert(t, (ty, data));
+            }
+        }
+        Ok(saved)
+    }
+
+    fn focused_class(&self) -> String {
+        let Ok(Ok(focus)) = self.conn.get_input_focus().map(|c| c.reply()) else {
+            return String::new();
+        };
+        let mut w = focus.focus;
+        for _ in 0..8 {
+            if w == x11rb::NONE || w == 1 || w == self.root {
+                break;
+            }
+            if let Ok(Ok(p)) = self
+                .conn
+                .get_property(false, w, self.a.wm_class, AtomEnum::STRING, 0, 256)
+                .map(|c| c.reply())
+            {
+                if !p.value.is_empty() {
+                    // WM_CLASS is "instance\0Class\0"; use the class.
+                    let parts: Vec<&[u8]> = p
+                        .value
+                        .split(|b| *b == 0)
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    let class = parts.last().copied().unwrap_or(&[]);
+                    return String::from_utf8_lossy(class).to_ascii_lowercase();
+                }
+            }
+            match self.conn.query_tree(w).map(|c| c.reply()) {
+                Ok(Ok(t)) => w = t.parent,
+                _ => break,
+            }
+        }
+        String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_detection() {
+        for t in [
+            "gnome-terminal-server",
+            "xfce4-terminal",
+            "kitty",
+            "alacritty",
+            "org.wezfurlong.wezterm",
+            "xterm",
+            "tilix",
+        ] {
+            assert!(is_terminal(t), "{t}");
+        }
+        for t in ["firefox", "code", "libreoffice-writer", "xed", "slack"] {
+            assert!(!is_terminal(t), "{t}");
+        }
+    }
+}

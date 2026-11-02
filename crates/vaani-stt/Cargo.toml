@@ -9,6 +9,11 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+serde.workspace = true
+postcard.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+vaani-models.workspace = true
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "vaani-inject"
-description = "Text insertion backends: XTest, clipboard, libei, virtual keyboard, IBus, uinput"
+description = "Text insertion: X11 clipboard paste with restore"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+x11rb.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+crossbeam-channel.workspace = true
 
 [lints]
 workspace = true

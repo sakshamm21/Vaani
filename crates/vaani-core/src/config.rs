@@ -47,6 +47,7 @@ pub struct Config {
     pub version: u32,
     pub general: General,
     pub hotkey: Hotkey,
+    pub audio: Audio,
     pub engine: Engine,
     pub cleanup: Cleanup,
     pub insert: Insert,
@@ -60,6 +61,7 @@ impl Default for Config {
             version: CURRENT_VERSION,
             general: General::default(),
             hotkey: Hotkey::default(),
+            audio: Audio::default(),
             engine: Engine::default(),
             cleanup: Cleanup::default(),
             insert: Insert::default(),
@@ -75,13 +77,19 @@ pub struct General {
     /// Spoken language: "auto" or a BCP-47 code such as "en", "hi".
     pub language: String,
     pub autostart: bool,
+    /// Play short sounds when dictation starts and stops.
+    pub sounds: bool,
+    /// Show the floating pill while dictating.
+    pub overlay: bool,
 }
 
 impl Default for General {
     fn default() -> Self {
         Self {
             language: "auto".into(),
-            autostart: false,
+            autostart: true,
+            sounds: true,
+            overlay: true,
         }
     }
 }
@@ -89,7 +97,8 @@ impl Default for General {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyMode {
-    /// Hold to talk, release to finish.
+    /// Hold to talk, release to finish. A quick tap starts hands-free dictation instead;
+    /// tap again to finish.
     PushToTalk,
     /// Press once to start, again to finish.
     Toggle,
@@ -126,6 +135,13 @@ impl Default for Hotkey {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Audio {
+    /// Microphone name as listed in settings; empty means the system default.
+    pub device: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineKind {
@@ -142,6 +158,8 @@ pub struct Engine {
     /// A provider id such as "groq" or "openai_compatible".
     pub cloud_provider: String,
     pub cloud_model: String,
+    /// Decoding threads for local models; 0 picks automatically (physical cores, at most 4).
+    pub threads: u32,
 }
 
 impl Default for Engine {
@@ -151,6 +169,7 @@ impl Default for Engine {
             local_model: "parakeet-tdt-0.6b-v3".into(),
             cloud_provider: "groq".into(),
             cloud_model: "whisper-large-v3-turbo".into(),
+            threads: 0,
         }
     }
 }
@@ -162,6 +181,8 @@ pub struct Cleanup {
     pub ai_enabled: bool,
     /// Hard timeout for AI cleanup, after which the rule-cleaned text is used.
     pub ai_timeout_ms: u64,
+    /// Drop "um", "uh" and similar.
+    pub remove_fillers: bool,
 }
 
 impl Default for Cleanup {
@@ -169,6 +190,7 @@ impl Default for Cleanup {
         Self {
             ai_enabled: false,
             ai_timeout_ms: 1500,
+            remove_fillers: true,
         }
     }
 }
@@ -187,6 +209,8 @@ pub struct Insert {
     pub method: InsertMethod,
     /// Put the user's clipboard back after pasting.
     pub restore_clipboard: bool,
+    /// Add a space after each dictation so the next one doesn't run into it.
+    pub trailing_space: bool,
 }
 
 impl Default for Insert {
@@ -194,6 +218,7 @@ impl Default for Insert {
         Self {
             method: InsertMethod::Auto,
             restore_clipboard: true,
+            trailing_space: true,
         }
     }
 }
