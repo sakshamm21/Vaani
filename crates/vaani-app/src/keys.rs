@@ -1,17 +1,6 @@
 //! Names shown to people.
 
 pub const APP_ICON: &str = "io.github.sakshamm21.Vaani";
-/// Same logo with dark bars, used while Vaani is in its dark theme.
-pub const APP_ICON_DARK: &str = "io.github.sakshamm21.Vaani-dark";
-
-/// The logo variant that matches Vaani's current theme.
-pub fn app_icon() -> &'static str {
-    if crate::style::is_dark() {
-        APP_ICON_DARK
-    } else {
-        APP_ICON
-    }
-}
 
 /// "RightCtrl" -> "Right Ctrl".
 pub fn pretty(key: &str) -> String {

@@ -221,7 +221,7 @@ impl Settings {
             .title("Vaani")
             .default_width(900)
             .default_height(640)
-            .icon_name(crate::keys::app_icon())
+            .icon_name(crate::keys::APP_ICON)
             .build();
         window.add_css_class("vaani-settings");
         let header = gtk4::HeaderBar::new();
@@ -254,7 +254,7 @@ impl Settings {
             capture_button: gtk4::Button::with_label("Change…"),
             theme_drop: gtk4::DropDown::from_strings(&["Match my desktop", "Light", "Dark"]),
             theme_btn: gtk4::Button::new(),
-            about_logo: gtk4::Image::from_icon_name(crate::keys::app_icon()),
+            about_logo: gtk4::Image::from_icon_name(crate::keys::APP_ICON),
             history_list: gtk4::ListBox::new(),
             history_search: gtk4::SearchEntry::new(),
             last_status: RefCell::new(None),
@@ -321,13 +321,6 @@ impl Settings {
 
     fn sync_theme_button(&self) {
         set_theme_icon(&self.inner.theme_btn);
-        let logo = crate::keys::app_icon();
-        if self.inner.window.icon_name().as_deref() != Some(logo) {
-            self.inner.window.set_icon_name(Some(logo));
-        }
-        if self.inner.about_logo.icon_name().as_deref() != Some(logo) {
-            self.inner.about_logo.set_icon_name(Some(logo));
-        }
     }
 
     /// Still downloading something, so keep the state around after the window closes.
@@ -736,7 +729,7 @@ fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     let tryit = gtk4::Box::new(Orientation::Vertical, 6);
     tryit.add_css_class("tryit");
     let hint = label(
-        "Click in the box below, then hold your shortcut and speak.",
+        "Click here, hold your shortcut and speak. The text appears below.",
         "row-sub",
     );
     hint.set_margin_start(14);

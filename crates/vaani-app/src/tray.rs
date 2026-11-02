@@ -45,7 +45,7 @@ impl ksni::Tray for VaaniTray {
     fn icon_name(&self) -> String {
         match self.shared.state() {
             State::Recording => "media-record".into(),
-            _ => crate::keys::app_icon().into(),
+            _ => crate::keys::APP_ICON.into(),
         }
     }
     fn tool_tip(&self) -> ksni::ToolTip {
@@ -130,10 +130,10 @@ pub async fn run(shared: Arc<Shared>, tx: Sender<Input>) {
             }
         }
     };
-    let mut last = (State::Idle, EngineStatus::Loading(String::new()), false);
+    let mut last = (State::Idle, EngineStatus::Loading(String::new()));
     loop {
         tokio::time::sleep(Duration::from_millis(300)).await;
-        let now = (shared.state(), shared.engine(), crate::style::is_dark());
+        let now = (shared.state(), shared.engine());
         if now != last {
             last = now;
             if handle.update(|_| {}).await.is_none() {
