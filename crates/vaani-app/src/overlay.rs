@@ -416,13 +416,14 @@ pub fn pointer_monitor(c: &RustConnection, w: &gtk4::Window) -> (i32, i32, i32, 
 /// Move a normal (window-manager managed) window to the centre of the monitor under the
 /// pointer. GTK 4 has no API for this on X11, and some window managers (Cinnamon among them)
 /// otherwise place new windows at the top left.
-pub fn center_window(w: &gtk4::Window) {
+/// Returns true when the window already sits where it should.
+pub fn center_window(w: &gtk4::Window) -> bool {
     let Some(surface) = w.surface().and_downcast::<gdk4_x11::X11Surface>() else {
-        return;
+        return true;
     };
     let id = surface.xid() as u32;
     let Ok((c, _)) = x11rb::connect(None) else {
-        return;
+        return true;
     };
     let scale = w.scale_factor().max(1);
     // The X window includes the shadow GTK draws around client-side decorations, so use its
@@ -440,10 +441,18 @@ pub fn center_window(w: &gtk4::Window) {
     let (mx, my, mw, mh) = pointer_monitor(&c, w);
     let x = mx + ((mw - ww) / 2).max(0);
     let y = my + ((mh - wh) / 2).max(0);
-    tracing::debug!(x, y, ww, wh, "centring settings window");
+    let root = c.setup().roots.first().map(|s| s.root).unwrap_or(0);
+    let now = c
+        .translate_coordinates(id, root, 0, 0)
+        .ok()
+        .and_then(|r| r.reply().ok())
+        .map(|r| (i32::from(r.dst_x), i32::from(r.dst_y)));
+    if now == Some((x, y)) {
+        return true;
+    }
+    tracing::debug!(x, y, ww, wh, ?now, "centring settings window");
     // Ask the window manager through EWMH (honoured by Muffin, Mutter, KWin, Xfwm, Openbox),
     // and move the window directly too for window managers without it.
-    let root = c.setup().roots.first().map(|s| s.root).unwrap_or(0);
     if let Ok(atom) = c
         .intern_atom(false, b"_NET_MOVERESIZE_WINDOW")
         .map_err(|_| ())
@@ -461,18 +470,28 @@ pub fn center_window(w: &gtk4::Window) {
     }
     let _ = c.configure_window(id, &ConfigureWindowAux::new().x(x).y(y));
     let _ = c.flush();
+    false
 }
 
 /// Centre `w` when it is shown, and once more after the window manager has placed it.
 pub fn keep_centered_on_open(w: &gtk4::Window) {
     w.connect_map(|w| {
-        center_window(w);
-        // The window manager places the window after it is mapped; move it again once it has.
-        for ms in [120, 400] {
-            let w = w.clone();
-            gtk4::glib::timeout_add_local_once(Duration::from_millis(ms), move || {
-                center_window(&w);
-            });
-        }
+        // Window managers place a new window some time after it maps (Cinnamon can take a
+        // second), so keep putting it in the centre until it has stayed there for a moment.
+        let w = w.clone();
+        let (mut tries, mut settled) = (0u32, 0u32);
+        gtk4::glib::timeout_add_local(Duration::from_millis(100), move || {
+            tries += 1;
+            if center_window(&w) {
+                settled += 1;
+            } else {
+                settled = 0;
+            }
+            if settled >= 5 || tries >= 30 || !w.is_visible() {
+                gtk4::glib::ControlFlow::Break
+            } else {
+                gtk4::glib::ControlFlow::Continue
+            }
+        });
     });
 }
