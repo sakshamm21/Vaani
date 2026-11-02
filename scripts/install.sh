@@ -18,7 +18,8 @@ warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
 if [[ "${1:-}" == "--uninstall" ]]; then
   "$BIN/vaani" quit >/dev/null 2>&1 || true
   rm -f "$BIN/vaani" "$BIN/vaani-worker" "$SHARE/applications/$ID.desktop" \
-        "$SHARE/icons/hicolor/scalable/apps/$ID.svg" "$HOME/.config/autostart/$ID.desktop"
+        "$SHARE/icons/hicolor/scalable/apps/$ID.svg" "$SHARE/icons/hicolor/scalable/apps/$ID-dark.svg" \
+        "$HOME/.config/autostart/$ID.desktop"
   rm -rf "$SHARE/fonts/vaani"
   say "Vaani removed. Your settings, history and models are still in ~/.config/vaani and ~/.local/share/vaani."
   exit 0
@@ -56,7 +57,7 @@ cargo build --release -p vaani-app -p vaani-worker
 sleep 0.5
 mkdir -p "$BIN" "$SHARE/applications" "$SHARE/icons/hicolor/scalable/apps" "$SHARE/fonts/vaani"
 install -m755 target/release/vaani target/release/vaani-worker "$BIN/"
-install -m644 assets/icons/$ID.svg "$SHARE/icons/hicolor/scalable/apps/$ID.svg"
+install -m644 assets/icons/$ID.svg assets/icons/$ID-dark.svg "$SHARE/icons/hicolor/scalable/apps/"
 rm -f "$SHARE/fonts/vaani/"*.ttf
 install -m644 assets/fonts/*.ttf "$SHARE/fonts/vaani/"
 sed "s|^Exec=vaani|Exec=$BIN/vaani|" assets/$ID.desktop > "$SHARE/applications/$ID.desktop"

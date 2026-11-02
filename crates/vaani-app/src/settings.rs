@@ -79,6 +79,7 @@ struct Inner {
     capture_button: gtk4::Button,
     theme_drop: gtk4::DropDown,
     theme_btn: gtk4::Button,
+    about_logo: gtk4::Image,
     // History
     history_list: gtk4::ListBox,
     history_search: gtk4::SearchEntry,
@@ -204,7 +205,7 @@ impl Settings {
             .title("Vaani")
             .default_width(900)
             .default_height(640)
-            .icon_name(crate::keys::APP_ICON)
+            .icon_name(crate::keys::app_icon())
             .build();
         window.add_css_class("vaani-settings");
         let header = gtk4::HeaderBar::new();
@@ -237,6 +238,7 @@ impl Settings {
             capture_button: gtk4::Button::with_label("Change…"),
             theme_drop: gtk4::DropDown::from_strings(&["Match my desktop", "Light", "Dark"]),
             theme_btn: gtk4::Button::new(),
+            about_logo: gtk4::Image::from_icon_name(crate::keys::app_icon()),
             history_list: gtk4::ListBox::new(),
             history_search: gtk4::SearchEntry::new(),
             last_status: RefCell::new(None),
@@ -305,6 +307,13 @@ impl Settings {
             "weather-clear-night-symbolic"
         };
         self.inner.theme_btn.set_icon_name(icon);
+        let logo = crate::keys::app_icon();
+        if self.inner.window.icon_name().as_deref() != Some(logo) {
+            self.inner.window.set_icon_name(Some(logo));
+        }
+        if self.inner.about_logo.icon_name().as_deref() != Some(logo) {
+            self.inner.about_logo.set_icon_name(Some(logo));
+        }
     }
 
     /// Still downloading something, so keep the state around after the window closes.
@@ -1239,13 +1248,18 @@ fn build_history(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     sw
 }
 
-fn build_about(_inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
+fn build_about(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     let (sw, content) = page("", "");
     if let Some(first) = content.first_child() {
         content.remove(&first);
     }
+    let brand = gtk4::Box::new(Orientation::Horizontal, 14);
+    inner.about_logo.set_pixel_size(56);
+    brand.append(&inner.about_logo);
     let title = label("Vaani", "about-logo");
-    content.append(&title);
+    title.set_valign(Align::Center);
+    brand.append(&title);
+    content.append(&brand);
     content.append(&label(
         &format!(
             "Version {}. Open-source voice dictation for Linux. No account, no server, no telemetry.",
