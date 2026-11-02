@@ -1,0 +1,11 @@
+[package]
+name = "spike-x11-clipboard-paste"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+x11rb = { version = "0.14", features = ["xtest"] }
+anyhow = "1"
