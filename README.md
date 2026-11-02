@@ -1,18 +1,73 @@
-# Vaani
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/banner-dark.png">
+    <img src="assets/readme/banner-light.png" alt="Vaani: voice dictation for Linux" width="880">
+  </picture>
+</p>
 
-Vaani is a voice dictation app for Linux. Hold a key, speak, and release: the text is typed
-into whichever application has focus. Speech recognition runs locally by default, so audio
-never leaves your computer. A cloud provider can be used instead if you supply your own API key.
+<p align="center">
+  <a href="https://github.com/sakshamm21/vaani/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/sakshamm21/vaani/ci.yml?branch=main&style=flat-square&label=build&color=d6457a" alt="Build status"></a>
+  <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11-1d1d1f?style=flat-square" alt="Platform: Linux, X11">
+  <img src="https://img.shields.io/badge/made%20with-Rust%20%2B%20GTK%204-1d1d1f?style=flat-square" alt="Made with Rust and GTK 4">
+  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-1d1d1f?style=flat-square" alt="License: MIT or Apache-2.0"></a>
+</p>
 
-- Works in any application that accepts pasted text: browsers, editors, office suites, chat
-  clients and terminals.
-- Local speech recognition with [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), with a
-  choice of twelve models (Parakeet, Whisper, Moonshine, SenseVoice).
-- Optional cloud transcription through Groq, OpenAI or any OpenAI-compatible endpoint.
-- Hold-to-talk or hands-free mode, a configurable shortcut, and Esc to cancel.
-- A small on-screen indicator while recording, a tray icon, and a settings window with
-  history, model management and light and dark themes.
-- Native GTK 4 application with no browser engine. When idle it uses no measurable CPU.
+<p align="center">
+  <b>Hold a key, speak, let go.</b> Your words are typed into whatever app you're using:<br>
+  a browser, an editor, a chat window or a terminal. Speech recognition runs on your own<br>
+  computer by default, so your voice never leaves it.
+</p>
+
+<p align="center">
+  <img src="assets/readme/hero.png" alt="The Vaani settings window in dark and light mode" width="820">
+</p>
+
+## See it in action
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/demo-dark.gif">
+    <img src="assets/readme/demo-light.gif" alt="Holding Right Ctrl, speaking a sentence, and the text appearing in the test area" width="720">
+  </picture>
+  <br>
+  <sub>Hold <b>Right Ctrl</b>, speak, release. The pill shows your voice level, then the text appears where your cursor is.</sub>
+</p>
+
+## Highlights
+
+| | |
+| --- | --- |
+| **Works in every app** | Text goes into whatever has focus. Tested in Firefox, Xed and Nextpad++; browsers, editors, chat apps and terminals all take it the same way. |
+| **Private by default** | Twelve local speech models through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): Parakeet, Whisper, Moonshine and SenseVoice. No account, no telemetry. |
+| **Fast cloud option** | Bring your own key for Groq, OpenAI or any OpenAI-compatible server. Keys live in your system keyring. |
+| **Two ways to talk** | Hold the key to talk, or tap once for hands-free and tap again to finish. Esc cancels. |
+| **Light and dark** | A calm, native interface that follows your desktop or your choice, with a pink accent. |
+| **Lightweight** | Native GTK 4 with no browser engine. Idle CPU is effectively zero. |
+
+<p align="center">
+  <img src="assets/readme/pill.png" alt="The recording indicator while listening and while transcribing, in light and dark" width="560">
+  <br>
+  <sub>The recording indicator: listening (left) and transcribing (right).</sub>
+</p>
+
+## How it works
+
+```mermaid
+flowchart LR
+    K([Hold Right Ctrl]) --> M[Microphone<br/>16 kHz audio]
+    M --> E{Speech engine}
+    E -->|default| L[Local model<br/>sherpa-onnx worker]
+    E -->|optional| C[Cloud API<br/>Groq / OpenAI]
+    L --> T[Clean-up<br/>spacing, fillers]
+    C --> T
+    T --> H[(History)]
+    T --> P[Paste into the<br/>focused app]
+```
+
+Vaani runs as a small background process with a tray icon. The speech model runs in a separate
+worker process, so a model crash never takes the app down, and the model stays loaded between
+dictations for quick results. Text is inserted through the clipboard with a paste shortcut, and
+your previous clipboard is restored afterwards.
 
 ## Contents
 
@@ -127,6 +182,25 @@ Recordings are limited to five minutes.
 
 Open the settings window from the tray icon or the application menu. Changes are saved
 immediately.
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/readme/light-general.png" alt="General settings, light mode"></td>
+    <td width="50%"><img src="assets/readme/dark-speech.png" alt="Speech Model page, dark mode"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>General</b>: theme, shortcut, microphone, sounds and history</sub></td>
+    <td align="center"><sub><b>Speech Model</b>: pick and download local models</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme/dark-cloud.png" alt="Cloud settings, dark mode"></td>
+    <td width="50%"><img src="assets/readme/light-history.png" alt="History page, light mode"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Cloud</b>: your own API key for Groq, OpenAI or a compatible server</sub></td>
+    <td align="center"><sub><b>History</b>: search, copy, or clear past dictations</sub></td>
+  </tr>
+</table>
 
 **General**
 
@@ -346,7 +420,7 @@ crates/
   vaani-core       Configuration, state machine and paths
   vaani-platform   Session and desktop detection
 models/            Model catalogue (registry.toml)
-assets/            Icon, desktop entry and fonts
+assets/            Icons, desktop entry, fonts and README images
 scripts/           Install script
 ```
 
