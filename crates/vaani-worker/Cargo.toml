@@ -1,0 +1,18 @@
+[package]
+name = "vaani-worker"
+description = "Inference process: loads local models and runs VAD and speech-to-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "vaani-worker"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

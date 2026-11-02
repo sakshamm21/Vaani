@@ -1,0 +1,7 @@
+/target
+*.log
+*.wav
+!/tests/fixtures/audio/*.wav
+/models/*.onnx
+/models/*.bin
+.env

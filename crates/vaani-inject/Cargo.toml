@@ -1,0 +1,14 @@
+[package]
+name = "vaani-inject"
+description = "Text insertion backends: XTest, clipboard, libei, virtual keyboard, IBus, uinput"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
