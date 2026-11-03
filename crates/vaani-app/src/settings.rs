@@ -1345,6 +1345,29 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.audio.silence_stop_secs = secs);
         });
     }
+    let mut command_names = vec!["Off".to_string()];
+    command_names.extend(vaani_hotkey::KEYS.iter().map(|(n, _)| pretty(n)));
+    let command_refs: Vec<&str> = command_names.iter().map(String::as_str).collect();
+    let command = gtk4::DropDown::from_strings(&command_refs);
+    command.set_selected(
+        vaani_hotkey::KEYS
+            .iter()
+            .position(|(n, _)| n.eq_ignore_ascii_case(&cfg.hotkey.command_key))
+            .map_or(0, |i| i as u32 + 1),
+    );
+    {
+        let shared = shared.clone();
+        command.connect_selected_notify(move |d| {
+            let key = match d.selected() {
+                0 => String::new(),
+                i => vaani_hotkey::KEYS
+                    .get(i as usize - 1)
+                    .map(|(n, _)| (*n).to_string())
+                    .unwrap_or_default(),
+            };
+            update_config(&shared, |c| c.hotkey.command_key = key);
+        });
+    }
     content.append(&card(&[
         row(
             "Dictation key",
@@ -1352,6 +1375,11 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             &keybox,
         ),
         row("How the key works", "", &modes),
+        row(
+            "Command key",
+            "Select text, hold this key and say how to change it (\"make it shorter\"). Uses AI clean-up's provider.",
+            &command,
+        ),
         row(
             "Finish hands-free on silence",
             "Stops a hands-free dictation once you have been quiet this long.",
