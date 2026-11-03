@@ -1,16 +1,15 @@
-//! The D-Bus service the running app owns, and the client side used by CLI commands.
+//! Linux: the D-Bus service the running app owns, and the client side used by CLI commands.
 //!
 //! Owning the well-known name is also how we stay single-instance.
 
-use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
-use vaani_core::state::Command;
+use vaani_core::{DBUS_NAME, DBUS_PATH};
 
-use crate::controller::{EngineStatus, Input, Shared};
+use crate::controller::{Input, Shared};
+use crate::ipc::{Call, handle};
 
 pub struct Service {
     tx: Sender<Input>,
@@ -22,11 +21,8 @@ impl Service {
         Self { tx, shared }
     }
 
-    fn apply(&self, cmd: Command) -> String {
-        let _ = self.tx.send(Input::Cmd(cmd));
-        // Let the controller act so the reply shows the new state.
-        std::thread::sleep(Duration::from_millis(40));
-        self.shared.state().to_string()
+    fn call(&self, call: Call) -> String {
+        handle(call, &self.tx, &self.shared).unwrap_or_default()
     }
 }
 
@@ -34,43 +30,34 @@ impl Service {
 impl Service {
     /// Each method returns the state after the call: "idle", "recording" or "processing".
     fn toggle(&self) -> String {
-        self.apply(Command::Toggle)
+        self.call(Call::Toggle)
     }
     fn start(&self) -> String {
-        self.apply(Command::Start)
+        self.call(Call::Start)
     }
     fn stop(&self) -> String {
-        self.apply(Command::Stop)
+        self.call(Call::Stop)
     }
     fn cancel(&self) -> String {
-        self.apply(Command::Cancel)
+        self.call(Call::Cancel)
     }
     fn status(&self) -> String {
-        let engine = match self.shared.engine() {
-            EngineStatus::Ready(m) => format!("ready ({m})"),
-            EngineStatus::Loading(m) => format!("loading {m}"),
-            EngineStatus::Missing(m) => format!("model {m} not downloaded"),
-            EngineStatus::Failed(e) => format!("error: {e}"),
-        };
-        format!("{}; engine {engine}", self.shared.state())
+        self.call(Call::Status)
     }
     fn paste_last(&self) {
-        let _ = self.tx.send(Input::PasteLast);
+        self.call(Call::PasteLast);
     }
     fn command(&self) -> String {
-        let _ = self.tx.send(Input::CommandToggle);
-        std::thread::sleep(Duration::from_millis(40));
-        self.shared.state().to_string()
+        self.call(Call::Command)
     }
     fn reload_engine(&self) {
-        let _ = self.tx.send(Input::ReloadEngine);
+        self.call(Call::ReloadEngine);
     }
     fn show_settings(&self) {
-        crate::ui::request_settings();
+        self.call(Call::ShowSettings);
     }
     fn quit(&self) {
-        tracing::info!("quit requested over D-Bus");
-        crate::ui::request_quit();
+        self.call(Call::Quit);
     }
     #[zbus(property)]
     fn version(&self) -> String {
@@ -94,37 +81,6 @@ trait Vaani {
     fn reload_engine(&self) -> zbus::Result<()>;
     fn show_settings(&self) -> zbus::Result<()>;
     fn quit(&self) -> zbus::Result<()>;
-}
-
-#[derive(Clone, Copy)]
-pub enum Call {
-    Toggle,
-    Start,
-    Stop,
-    Cancel,
-    Status,
-    PasteLast,
-    Command,
-    ReloadEngine,
-    ShowSettings,
-    Quit,
-}
-
-/// Run one CLI command against the running app and print the result.
-pub fn client_call(call: Call) -> Result<ExitCode> {
-    crate::logging::init_cli();
-    match try_call(call) {
-        Ok(Some(out)) => {
-            println!("{out}");
-            Ok(ExitCode::SUCCESS)
-        }
-        Ok(None) => Ok(ExitCode::SUCCESS),
-        Err(e) if e.downcast_ref::<zbus::Error>().is_some_and(is_not_running) => {
-            eprintln!("Vaani is not running. Start it with `vaani` (or from the app menu).");
-            Ok(ExitCode::from(3))
-        }
-        Err(e) => Err(e),
-    }
 }
 
 /// True when a call failed only because Vaani isn't running.
@@ -158,8 +114,42 @@ pub fn try_call(call: Call) -> Result<Option<String>> {
     })
 }
 
+/// Whether another instance is running (for `vaani doctor`).
+pub fn running() -> bool {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return false;
+    };
+    rt.block_on(async {
+        match zbus::Connection::session().await {
+            Ok(conn) => is_running(&conn).await,
+            Err(_) => false,
+        }
+    })
+}
+
+/// Serve the D-Bus API. Ok(None) if another instance owns the name.
+pub async fn serve(shared: Arc<Shared>, tx: Sender<Input>) -> Result<Option<zbus::Connection>> {
+    let conn = zbus::connection::Builder::session()
+        .context("could not connect to the D-Bus session bus")?
+        .serve_at(DBUS_PATH, Service::new(tx, shared))?
+        .build()
+        .await
+        .context("could not connect to the D-Bus session bus")?;
+    match conn
+        .request_name_with_flags(DBUS_NAME, zbus::fdo::RequestNameFlags::DoNotQueue.into())
+        .await
+    {
+        Ok(_) => Ok(Some(conn)),
+        Err(zbus::Error::NameTaken) => Ok(None),
+        Err(e) => Err(e).context("could not claim the D-Bus name"),
+    }
+}
+
 /// Is another instance already serving the D-Bus name?
-pub async fn is_running(conn: &zbus::Connection) -> bool {
+async fn is_running(conn: &zbus::Connection) -> bool {
     match zbus::fdo::DBusProxy::new(conn).await {
         Ok(p) => match zbus::names::BusName::try_from(vaani_core::DBUS_NAME) {
             Ok(name) => p.name_has_owner(name).await.unwrap_or(false),

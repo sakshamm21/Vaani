@@ -19,8 +19,8 @@ use wayland_client::{
 use xkbcommon::xkb;
 
 use super::{Offer, SAVE_LIMIT, Sel, TEXT_TYPES, focused_app, poll_in, read_keymap, text_offer, w};
-use crate::keys::Keys;
-use crate::{Cmd, InjectError, Mode, Outcome, is_terminal};
+use crate::linux::keys::Keys;
+use crate::linux::{Cmd, InjectError, Mode, Outcome, is_terminal};
 
 #[derive(Default)]
 struct State {
@@ -147,7 +147,7 @@ impl Service {
                 if let Some(s) = wake {
                     fds.push(s.as_fd());
                 }
-                crate::wait_readable(&fds, timeout_ms);
+                crate::linux::wait_readable(&fds, timeout_ms);
                 poll_in(fd)
             };
             if readable {
@@ -260,7 +260,7 @@ impl Service {
                     if Instant::now() > deadline || out.len() > SAVE_LIMIT {
                         return None;
                     }
-                    crate::wait_readable(&[file.as_fd()], 20);
+                    crate::linux::wait_readable(&[file.as_fd()], 20);
                 }
                 Err(_) => return None,
             }

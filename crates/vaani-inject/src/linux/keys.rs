@@ -14,7 +14,7 @@ use x11rb::protocol::xproto::Window;
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
-use crate::InjectError;
+use crate::linux::InjectError;
 
 pub(crate) enum Keys {
     XTest,
@@ -64,7 +64,7 @@ impl Keys {
             Self::XTest => {
                 let kind = if down { 2 } else { 3 };
                 conn.xtest_fake_input(kind, code, CURRENT_TIME, root, 0, 0, 0)
-                    .map_err(crate::x)?;
+                    .map_err(crate::linux::x)?;
                 Ok(())
             }
             _ => self.evdev(u16::from(code.saturating_sub(8)), down),
@@ -88,7 +88,7 @@ impl Keys {
     /// Send queued key events now.
     pub(crate) fn flush(&self, conn: &RustConnection) -> Result<(), InjectError> {
         if matches!(self, Self::XTest) {
-            conn.flush().map_err(crate::x)?;
+            conn.flush().map_err(crate::linux::x)?;
         }
         Ok(())
     }

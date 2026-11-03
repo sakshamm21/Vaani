@@ -53,6 +53,7 @@ pub fn run(shared: Arc<Shared>, ctrl: Sender<Input>, rx: Receiver<UiCmd>, show_s
         }
         return;
     }
+    crate::style::load_fonts();
     crate::style::apply(theme_of(&shared));
     let main_loop = glib::MainLoop::new(None, false);
     let overlay = crate::overlay::Overlay::new(shared.clone());

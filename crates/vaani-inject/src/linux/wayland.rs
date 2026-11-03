@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use xkbcommon::xkb;
 
-use crate::InjectError;
+use crate::linux::InjectError;
 
 fn w<E: std::fmt::Display>(e: E) -> InjectError {
     InjectError::Wayland(e.to_string())

@@ -69,6 +69,52 @@ jobs:
       - name: Run
         run: vaani --version && vaani doctor
 
+  # Windows: lint, test, build the installer and portable zip, then install and use them.
+  windows:
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: -D warnings -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: GTK
+        uses: ./.github/actions/gtk-windows
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Package
+        shell: pwsh
+        run: |
+          python -m pip install --quiet pefile
+          ./scripts/package-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS-windows
+      - name: Install, dictate into Notepad, uninstall
+        shell: powershell
+        run: |
+          $setup = (Get-ChildItem dist\vaani-*-setup.exe).FullName
+          ./scripts/windows-smoke-test.ps1 -Setup $setup -Shots screenshots
+      - name: Portable zip starts
+        shell: pwsh
+        run: |
+          Expand-Archive (Get-ChildItem dist\*-portable.zip).FullName $env:RUNNER_TEMP\portable
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          & "$env:RUNNER_TEMP\portable\Vaani\bin\vaani.exe" --version | Out-String
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-screenshots
+          path: screenshots/
+
   # The from-source install script on distributions with other package managers.
   install-script:
     runs-on: ubuntu-24.04

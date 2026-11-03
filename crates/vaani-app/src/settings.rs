@@ -2423,7 +2423,7 @@ fn build_about(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     content.append(&brand);
     content.append(&label(
         &format!(
-            "Version {}. Open-source voice dictation for Linux. No account, no server, no telemetry.",
+            "Version {}. Open-source voice dictation. No account, no server, no telemetry.",
             env!("CARGO_PKG_VERSION")
         ),
         "row-sub",
@@ -2433,7 +2433,7 @@ fn build_about(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         move |_: &gtk4::Button| {
             if let Some(p) = &path {
                 let _ = std::fs::create_dir_all(p);
-                let uri = format!("file://{}", p.display());
+                let uri = gtk4::gio::File::for_path(p).uri();
                 // Don't pass on the XWayland backend Vaani may run its own UI with.
                 let ctx = gtk4::gio::AppLaunchContext::new();
                 ctx.unsetenv("GDK_BACKEND");
@@ -2452,7 +2452,14 @@ fn build_about(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     let diag = gtk4::Button::with_label("Copy");
     diag.connect_clicked(|b| {
         let exe = std::env::current_exe().unwrap_or_else(|_| "vaani".into());
-        if let Ok(out) = std::process::Command::new(exe).arg("doctor").output() {
+        let mut cmd = std::process::Command::new(exe);
+        #[cfg(windows)]
+        {
+            // No console window flashing up.
+            use std::os::windows::process::CommandExt as _;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        if let Ok(out) = cmd.arg("doctor").output() {
             b.clipboard()
                 .set_text(&String::from_utf8_lossy(&out.stdout));
             b.set_label("Copied");
