@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use vaani_core::config::Config;
 
-pub fn run(text: Option<String>, file: Option<PathBuf>) -> Result<ExitCode> {
+pub fn run(text: Option<String>, file: Option<PathBuf>, models: bool) -> Result<ExitCode> {
     let cfg = vaani_core::paths::config_file()
         .and_then(|p| Config::load(&p).ok())
         .unwrap_or_default();
@@ -24,6 +24,12 @@ pub fn run(text: Option<String>, file: Option<PathBuf>) -> Result<ExitCode> {
         vaani_store::secrets::get_key(provider.key_id)
             .with_context(|| format!("no {} API key saved", provider.name))?
     };
+    if models {
+        for id in vaani_llm::list_models(provider, &c.ai_base_url, &key)? {
+            println!("{id}");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let dictionary: Vec<String> = cfg
         .dictionary
         .replacements

@@ -51,7 +51,7 @@ fn main() -> ExitCode {
         },
         Cmd::History { count } => models_cmd::history(count),
         Cmd::Doctor { json } => doctor::run(json),
-        Cmd::Cleanup { text, file } => ai_cmd::run(text, file),
+        Cmd::Cleanup { text, file, models } => ai_cmd::run(text, file, models),
     };
     match result {
         Ok(code) => code,

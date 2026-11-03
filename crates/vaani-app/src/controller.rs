@@ -25,6 +25,95 @@ const TAP: Duration = Duration::from_millis(300);
 /// Clips shorter than this are treated as accidental presses.
 const MIN_AUDIO_SAMPLES: usize = 16_000 * 3 / 10;
 /// Stop recording automatically after this long.
+/// Long dictations are transcribed in pieces while the speaker talks, cut at pauses, so the
+/// wait after the key is released stays short. A piece is at least this long.
+const PIECE_MIN: usize = 16_000 * 15;
+/// Past this much untranscribed audio, cut at the quietest moment even without a clear pause.
+const PIECE_FORCE: usize = 16_000 * 45;
+
+/// Pieces of a long dictation already transcribed (or in flight) while recording.
+#[derive(Default)]
+struct Early {
+    texts: Vec<String>,
+    /// 16 kHz samples covered by `texts`.
+    offset: usize,
+    /// The piece being transcribed now: where it ends, and its result.
+    pending: Option<(usize, Receiver<Result<String, String>>)>,
+    last_check: Option<Instant>,
+}
+
+impl Early {
+    /// Collect a finished piece, if any. `wait` blocks until the in-flight piece is done.
+    fn collect(&mut self, wait: bool) {
+        let Some((cut, rx)) = &self.pending else {
+            return;
+        };
+        let got = if wait {
+            rx.recv_timeout(Duration::from_secs(120)).ok()
+        } else {
+            rx.try_recv().ok()
+        };
+        let disconnected = !wait
+            && matches!(
+                rx.try_recv(),
+                Err(crossbeam_channel::TryRecvError::Disconnected)
+            );
+        match got {
+            Some(Ok(text)) => {
+                let cut = *cut;
+                self.texts.push(text);
+                self.offset = cut;
+                self.pending = None;
+            }
+            // Failed: the final pass covers this audio instead.
+            Some(Err(e)) => {
+                tracing::warn!("early transcription failed: {e}");
+                self.pending = None;
+            }
+            None if wait || disconnected => self.pending = None,
+            None => {}
+        }
+    }
+}
+
+/// Where to end the next piece: the middle of the last pause of at least 300 ms, or the
+/// quietest moment when the piece is getting very long. None means keep waiting.
+fn find_cut(audio: &[f32], from: usize) -> Option<usize> {
+    const FRAME: usize = 320; // 20 ms
+    let end = audio.len().saturating_sub(16_000 / 2);
+    if end <= from + PIECE_MIN {
+        return None;
+    }
+    let rms = |i: usize| {
+        let f = &audio[i..i + FRAME];
+        (f.iter().map(|v| v * v).sum::<f32>() / FRAME as f32).sqrt()
+    };
+    let start = from + PIECE_MIN;
+    let mut quiet_run = 0;
+    let mut i = end - FRAME;
+    while i >= start {
+        if rms(i) < 0.01 {
+            quiet_run += 1;
+            if quiet_run >= 15 {
+                return Some(i + quiet_run * FRAME / 2);
+            }
+        } else {
+            quiet_run = 0;
+        }
+        if i < FRAME {
+            break;
+        }
+        i -= FRAME;
+    }
+    if end - from < PIECE_FORCE {
+        return None;
+    }
+    (start..end - FRAME)
+        .step_by(FRAME)
+        .min_by(|a, b| rms(*a).total_cmp(&rms(*b)))
+        .map(|i| i + FRAME / 2)
+}
+
 const MAX_RECORDING: Duration = Duration::from_secs(5 * 60);
 
 pub enum Input {
@@ -89,6 +178,7 @@ pub struct Controller {
     job_cancel: Option<Arc<AtomicBool>>,
     /// When the speaker was last heard, for the hands-free silence stop.
     last_voice: Option<Instant>,
+    early: Early,
     tx: Sender<Input>,
 }
 
@@ -155,6 +245,7 @@ impl Controller {
             latched: false,
             job_cancel: None,
             last_voice: None,
+            early: Early::default(),
             tx,
         };
         c.start_hotkey();
@@ -312,6 +403,7 @@ impl Controller {
 
     fn on_tick(&mut self) {
         self.check_silence();
+        self.transcribe_early();
         if let Some(r) = &self.recording {
             if r.elapsed() > MAX_RECORDING {
                 tracing::info!(
@@ -321,6 +413,46 @@ impl Controller {
                 self.command(Command::Stop);
             }
         }
+    }
+
+    /// While a long dictation is still being spoken, transcribe what is done so far.
+    fn transcribe_early(&mut self) {
+        let Some(rec) = &self.recording else { return };
+        self.early.collect(false);
+        if self.early.pending.is_some()
+            || rec.elapsed() < Duration::from_secs(16)
+            || self
+                .early
+                .last_check
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(2))
+            || !matches!(self.shared.engine(), EngineStatus::Ready(_))
+        {
+            return;
+        }
+        self.early.last_check = Some(Instant::now());
+        let Ok(audio) = rec.peek() else { return };
+        let Some(cut) = find_cut(&audio, self.early.offset) else {
+            return;
+        };
+        let piece = audio[self.early.offset..cut].to_vec();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let engine = self.engine.clone();
+        let language = self.config.general.language.clone();
+        let _ = thread::Builder::new().name("early".into()).spawn(move || {
+            let r = match engine.lock() {
+                Ok(mut slot) => match slot.as_mut() {
+                    Some(e) => e
+                        .transcribe(&piece, &language)
+                        .map(|t| t.text)
+                        .map_err(|e| e.to_string()),
+                    None => Err("no engine".into()),
+                },
+                Err(_) => Err("engine lock".into()),
+            };
+            let _ = tx.send(r);
+        });
+        tracing::debug!(from = self.early.offset, cut, "transcribing a piece early");
+        self.early.pending = Some((cut, rx));
     }
 
     /// Hands-free only: finish once the speaker has been quiet for the configured time.
@@ -443,7 +575,10 @@ impl Controller {
                 crate::media::resume();
                 crate::sounds::play(&self.config, crate::sounds::Cue::Stop);
                 match self.recording.take().map(|r| r.finish()) {
-                    Some(Ok(samples)) => self.spawn_job(samples),
+                    Some(Ok(samples)) => {
+                        let early = std::mem::take(&mut self.early);
+                        self.spawn_job(samples, early)
+                    }
                     Some(Err(e)) => {
                         tracing::error!("{e}");
                         self.machine.handle(Command::Finished);
@@ -460,6 +595,7 @@ impl Controller {
                 if let Some(r) = self.recording.take() {
                     r.discard();
                 }
+                self.early = Early::default();
                 tracing::info!("dictation cancelled");
             }
             Effect::AbortProcessing => {
@@ -482,7 +618,7 @@ impl Controller {
         }
     }
 
-    fn spawn_job(&mut self, samples: Vec<f32>) {
+    fn spawn_job(&mut self, samples: Vec<f32>, early: Early) {
         let cancel = Arc::new(AtomicBool::new(false));
         self.job_cancel = Some(cancel.clone());
         let ctx = Job {
@@ -492,6 +628,7 @@ impl Controller {
             config: self.config.clone(),
             shared: self.shared.clone(),
             cancel,
+            early,
         };
         let tx = self.tx.clone();
         let _ = thread::Builder::new()
@@ -521,6 +658,7 @@ struct Job {
     config: Config,
     shared: Arc<Shared>,
     cancel: Arc<AtomicBool>,
+    early: Early,
 }
 
 impl Job {
@@ -653,7 +791,7 @@ impl Job {
         }
     }
 
-    fn run(self, samples: Vec<f32>) {
+    fn run(mut self, samples: Vec<f32>) {
         let released = Instant::now();
         let audio_ms = (samples.len() as u64 * 1000 / 16_000) as i64;
         if samples.len() < MIN_AUDIO_SAMPLES {
@@ -672,6 +810,39 @@ impl Job {
         if self.cancel.load(Ordering::Relaxed) {
             return;
         }
+        // Pieces already transcribed while recording; only the rest is left to do.
+        self.early.collect(true);
+        let done = std::mem::take(&mut self.early.texts);
+        let offset = if done.is_empty() {
+            0
+        } else {
+            self.early.offset.min(samples.len())
+        };
+        let rest = &samples[offset..];
+        if !done.is_empty() {
+            tracing::debug!(
+                pieces = done.len(),
+                rest_ms = rest.len() / 16,
+                "using early pieces"
+            );
+        }
+        let join = |tail: String| {
+            let mut parts = done.clone();
+            if !tail.trim().is_empty() {
+                parts.push(tail);
+            }
+            parts.join(" ")
+        };
+        if rest.len() < MIN_AUDIO_SAMPLES && !done.is_empty() {
+            let raw = join(String::new());
+            let name = self
+                .engine
+                .lock()
+                .ok()
+                .and_then(|s| s.as_ref().map(|e| e.name()))
+                .unwrap_or_default();
+            return self.finish(raw, name, audio_ms, released);
+        }
         let result = {
             let Ok(mut slot) = self.engine.lock() else {
                 return;
@@ -688,18 +859,18 @@ impl Job {
                 return;
             };
             engine
-                .transcribe(&samples, &self.config.general.language)
+                .transcribe(rest, &self.config.general.language)
                 .map(|t| (t, engine.name()))
         };
         let (raw, engine_name) = match result {
             Ok((t, name)) => {
                 tracing::info!(audio_ms, took_ms = t.took.as_millis() as u64, "transcribed");
-                (t.text, name)
+                (join(t.text), name)
             }
-            Err(e) => match self.local_fallback(&samples) {
+            Err(e) => match self.local_fallback(rest) {
                 // The cloud failed (offline, quota, outage): use the local model if one is
                 // installed, so the words are not lost.
-                Some(done) => done,
+                Some((t, name)) => (join(t), name),
                 None => {
                     tracing::error!("transcription failed: {e}");
                     crate::notify::send("Transcription failed", &e.to_string());
@@ -707,6 +878,11 @@ impl Job {
                 }
             },
         };
+        self.finish(raw, engine_name, audio_ms, released);
+    }
+
+    /// Everything after transcription: commands, clean-up, history and typing.
+    fn finish(&self, raw: String, engine_name: String, audio_ms: i64, released: Instant) {
         // "Scratch that": remove the previous dictation instead of typing anything.
         if self.config.dictionary.spoken_commands && vaani_text::is_scratch(&raw) {
             self.scratch_last();

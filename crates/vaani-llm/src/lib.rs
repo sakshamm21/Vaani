@@ -272,6 +272,51 @@ fn complete(
     Ok(text.to_string())
 }
 
+/// The models the provider offers with this key, for picking one in Settings.
+pub fn list_models(
+    provider: &Provider,
+    base_url: &str,
+    api_key: &str,
+) -> Result<Vec<String>, LlmError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| LlmError::Network(e.to_string()))?;
+    let base = if base_url.is_empty() {
+        provider.base_url
+    } else {
+        base_url
+    }
+    .trim_end_matches('/');
+    let mut r = client.get(format!("{base}/models"));
+    r = match provider.api {
+        Api::OpenAi if !api_key.is_empty() => r.bearer_auth(api_key),
+        Api::OpenAi => r,
+        Api::Anthropic => r
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01"),
+    };
+    let resp = r.send().map_err(|e| LlmError::Network(e.to_string()))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json()
+        .map_err(|e| LlmError::Api(format!("bad response ({status}): {e}")))?;
+    if !status.is_success() {
+        return Err(LlmError::Api(format!("{} said {status}", provider.name)));
+    }
+    let mut ids: Vec<String> = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    Ok(ids)
+}
+
 /// Openings that mean the model is talking to the user instead of editing.
 const PREAMBLES: &[&str] = &[
     "sure",

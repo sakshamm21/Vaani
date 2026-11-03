@@ -49,6 +49,9 @@ pub enum Cmd {
         /// Clean every line of this file and report each result (for testing prompts).
         #[arg(long)]
         file: Option<std::path::PathBuf>,
+        /// List the models your AI provider offers instead.
+        #[arg(long)]
+        models: bool,
     },
     /// Check this computer's setup and print a report to paste into bug reports.
     Doctor {

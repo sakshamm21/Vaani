@@ -223,6 +223,13 @@ impl Recording {
         self.started.elapsed()
     }
 
+    /// The audio so far as 16 kHz mono, without stopping (for transcribing long dictations
+    /// in pieces while the speaker is still talking).
+    pub fn peek(&self) -> Result<Vec<f32>, AudioError> {
+        let mono = self.samples.lock().map(|s| s.clone()).unwrap_or_default();
+        resample(&mono, self.rate)
+    }
+
     /// Stop the mic and return 16 kHz mono audio.
     pub fn finish(self) -> Result<Vec<f32>, AudioError> {
         if let Some(s) = &self.stream {
