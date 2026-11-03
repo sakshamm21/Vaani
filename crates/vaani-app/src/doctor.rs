@@ -62,12 +62,26 @@ fn components(session: &SessionInfo) -> Vec<Component> {
         .and_then(|p| Config::load(&p).ok())
         .unwrap_or_default();
     let mut v = Vec::new();
+    let key = &config.hotkey.key;
     v.push(component(
         "hotkey",
-        if session.session_type == SessionType::X11 || session.xwayland {
-            Ok(format!("X11 XInput2, key {}", config.hotkey.key))
-        } else {
-            Err("needs an X11 session (Wayland support comes later)".into())
+        match vaani_hotkey::backend() {
+            vaani_hotkey::Backend::X11 if session.x11_display.is_some() => {
+                Ok(format!("X11 XInput2, key {key}"))
+            }
+            vaani_hotkey::Backend::X11 => Err("no X display to listen on".into()),
+            vaani_hotkey::Backend::Evdev => Ok(format!("evdev (/dev/input), key {key}")),
+            vaani_hotkey::Backend::Portal if vaani_hotkey::portal_available() => Ok(
+                "GlobalShortcuts portal (Esc can't cancel; to hold any key such as Right Ctrl, \
+                 run `sudo usermod -aG input $USER` and log in again)"
+                    .into(),
+            ),
+            vaani_hotkey::Backend::Portal => Err(
+                "can't read /dev/input and the desktop has no GlobalShortcuts portal: run \
+                 `sudo usermod -aG input $USER` and log in again, or bind `vaani toggle` to a \
+                 shortcut in your desktop settings"
+                    .into(),
+            ),
         },
     ));
     let mics = vaani_audio::input_devices();
@@ -99,10 +113,17 @@ fn components(session: &SessionInfo) -> Vec<Component> {
     ));
     v.push(component(
         "text insertion",
-        if session.x11_display.is_some() {
-            Ok("clipboard paste via XTest".into())
-        } else {
-            Err("needs an X11 display".into())
+        match (session.session_type, session.x11_display.is_some()) {
+            (_, false) => Err("needs XWayland or an X11 display for the clipboard".into()),
+            (SessionType::Wayland, true) if vaani_inject::uinput_usable() => {
+                Ok("clipboard via XWayland, keys via a uinput virtual keyboard".into())
+            }
+            (SessionType::Wayland, true) => Err(
+                "can't open /dev/uinput, so keys only reach XWayland apps; see the README's \
+                 Wayland section"
+                    .into(),
+            ),
+            _ => Ok("clipboard paste via XTest".into()),
         },
     ));
     v

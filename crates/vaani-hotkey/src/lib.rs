@@ -1,5 +1,8 @@
 //! Global hotkey detection.
 //!
+//! On Wayland the keyboards are read through evdev when /dev/input is readable, and
+//! otherwise the GlobalShortcuts portal is used (see those modules).
+//!
 //! X11 backend: XInput2 raw key events on the root window. They arrive from every keyboard
 //! without grabbing the key, so the key keeps working in other apps, and they report key-up,
 //! which push-to-talk needs. Auto-repeat presses are ignored. Esc while dictating cancels.
@@ -16,8 +19,19 @@ use x11rb::protocol::xinput::{self, ConnectionExt as _, KeyEventFlags};
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
+mod evdev;
+mod portal;
+
 #[derive(Debug, thiserror::Error)]
 pub enum HotkeyError {
+    #[error(
+        "cannot read the keyboards in /dev/input ({0} not permitted); add yourself to the `input` group"
+    )]
+    NoInputAccess(usize),
+    #[error("global shortcuts portal: {0}")]
+    Portal(String),
+    #[error("{0}")]
+    Io(String),
     #[error("cannot connect to the X server (is this an X11 session?): {0}")]
     Connect(String),
     #[error("XInput2 is not available: {0}")]
@@ -152,6 +166,71 @@ pub struct Listener {
     stop: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// How the hotkey is detected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    /// XInput2 raw key events (X11 sessions).
+    X11,
+    /// Reading /dev/input directly (Wayland, when permitted).
+    Evdev,
+    /// The desktop's GlobalShortcuts portal (Wayland fallback).
+    Portal,
+}
+
+impl Backend {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::X11 => "X11 (XInput2)",
+            Self::Evdev => "evdev (/dev/input)",
+            Self::Portal => "GlobalShortcuts portal",
+        }
+    }
+}
+
+fn wayland_session() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v == "wayland")
+}
+
+/// The backend [`listen`] would use right now.
+pub fn backend() -> Backend {
+    if !wayland_session() {
+        Backend::X11
+    } else if evdev::available() {
+        Backend::Evdev
+    } else {
+        Backend::Portal
+    }
+}
+
+/// Whether the GlobalShortcuts portal answers (for `vaani doctor`).
+pub fn portal_available() -> bool {
+    portal::available()
+}
+
+/// Start listening for `key` with the best backend for this session. Events go to `tx`.
+pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<(Listener, Backend), HotkeyError> {
+    let b = backend();
+    let l = match b {
+        Backend::X11 => listen_x11(key, tx)?,
+        Backend::Evdev => evdev::listen(key, tx)?,
+        Backend::Portal => portal::listen(key, tx)?,
+    };
+    Ok((l, b))
+}
+
+/// Wait for the next key press from a pickable key and return its name (for the settings
+/// "press a key" button). Returns None after `timeout`.
+pub fn capture_next_key(timeout: Duration) -> Result<Option<&'static str>, HotkeyError> {
+    match backend() {
+        Backend::X11 => capture_x11(timeout),
+        Backend::Evdev => evdev::capture_next_key(timeout),
+        Backend::Portal => Err(HotkeyError::Portal(
+            "change the shortcut in your desktop's keyboard settings".into(),
+        )),
+    }
+}
+
 impl Drop for Listener {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -169,7 +248,7 @@ impl Listener {
 }
 
 /// Start listening for `key` on X11. Events go to `tx`.
-pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
+fn listen_x11(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
     keysym_for(key).ok_or_else(|| HotkeyError::UnknownKey(key.into()))?;
     let (conn, _root) = connect()?;
     let keymap = Keymap::load(&conn)?;
@@ -238,9 +317,7 @@ pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
     Ok(listener)
 }
 
-/// Wait for the next key press from a pickable key and return its name (for the settings
-/// "press a key" button). Returns None after `timeout`.
-pub fn capture_next_key(timeout: Duration) -> Result<Option<&'static str>, HotkeyError> {
+fn capture_x11(timeout: Duration) -> Result<Option<&'static str>, HotkeyError> {
     let (conn, _) = connect()?;
     let keymap = Keymap::load(&conn)?;
     let end = std::time::Instant::now() + timeout;

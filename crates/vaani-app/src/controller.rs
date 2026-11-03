@@ -248,15 +248,17 @@ impl Controller {
             early: Early::default(),
             tx,
         };
-        c.start_hotkey();
+        // The portal hotkey can wait on a desktop dialog, so start loading the model first.
         c.load_engine();
+        c.start_hotkey();
         c
     }
 
     fn start_hotkey(&mut self) {
         let (htx, hrx) = crossbeam_channel::unbounded();
         match vaani_hotkey::listen(&self.config.hotkey.key, htx) {
-            Ok(l) => {
+            Ok((l, backend)) => {
+                tracing::info!(backend = backend.label(), "hotkey listening");
                 self.hotkey = Some(l);
                 let tx = self.tx.clone();
                 let _ = thread::Builder::new()

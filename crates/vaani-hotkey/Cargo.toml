@@ -1,6 +1,6 @@
 [package]
 name = "vaani-hotkey"
-description = "Hotkey backends (X11 XInput2 for now)"
+description = "Hotkey backends: X11 XInput2, evdev and the GlobalShortcuts portal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,10 @@ rustix.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 crossbeam-channel.workspace = true
+evdev.workspace = true
+ashpd.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
 
 [lints]
 workspace = true

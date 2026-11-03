@@ -14,6 +14,7 @@ rustix.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 crossbeam-channel.workspace = true
+evdev.workspace = true
 
 [lints]
 workspace = true

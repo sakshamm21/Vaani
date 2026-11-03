@@ -23,7 +23,6 @@ use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, SelectionNotifyEvent,
     SelectionRequestEvent, Window, WindowClass,
 };
-use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
@@ -33,9 +32,14 @@ pub enum InjectError {
     Connect(String),
     #[error("X11 error: {0}")]
     X11(String),
+    #[error("cannot use the virtual keyboard (/dev/uinput): {0}")]
+    Uinput(String),
     #[error("the insertion thread stopped")]
     Gone,
 }
+
+mod keys;
+use keys::Keys;
 
 fn x<E: std::fmt::Display>(e: E) -> InjectError {
     InjectError::X11(e.to_string())
@@ -185,6 +189,7 @@ struct Service {
     offer: Offer,
     owned: bool,
     max_prop: usize,
+    keys: Keys,
 }
 
 const TERMINALS: &[&str] = &[
@@ -213,6 +218,20 @@ const TERMINALS: &[&str] = &[
     "cool-retro-term",
 ];
 
+/// Whether /dev/uinput can be opened for writing (for `vaani doctor`).
+pub fn uinput_usable() -> bool {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/uinput")
+        .is_ok()
+}
+
+/// Whether this is a Wayland session (Vaani then talks to XWayland for the clipboard).
+fn wayland_session() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v == "wayland")
+}
+
 /// Whether a window class (lowercase) belongs to a terminal emulator.
 pub fn is_terminal(class: &str) -> bool {
     TERMINALS.iter().any(|t| class.contains(t))
@@ -220,6 +239,17 @@ pub fn is_terminal(class: &str) -> bool {
 
 impl Service {
     fn new() -> Result<Self, InjectError> {
+        let keys = if wayland_session() {
+            match Keys::uinput() {
+                Ok(k) => k,
+                Err(e) => {
+                    tracing::warn!("{e}; keys will only reach XWayland apps");
+                    Keys::XTest
+                }
+            }
+        } else {
+            Keys::XTest
+        };
         let (conn, screen) =
             x11rb::connect(None).map_err(|e| InjectError::Connect(e.to_string()))?;
         let root = conn.setup().roots[screen].root;
@@ -271,6 +301,7 @@ impl Service {
             offer: Offer::new(),
             owned: false,
             max_prop,
+            keys,
         })
     }
 
@@ -500,7 +531,7 @@ impl Service {
             let (code, shifted) = match direct.get(&sym) {
                 Some(&k) => k,
                 None => {
-                    let Some(code) = spare else {
+                    let Some(code) = spare.filter(|_| self.keys.can_remap()) else {
                         return Err(InjectError::X11(format!("no key to type {ch:?}")));
                     };
                     let mut syms = vec![0u32; per];
@@ -519,22 +550,14 @@ impl Service {
                 }
             };
             if shifted {
-                self.conn
-                    .xtest_fake_input(2, shift, CURRENT_TIME, self.root, 0, 0, 0)
-                    .map_err(x)?;
+                self.key(shift, true)?;
             }
-            self.conn
-                .xtest_fake_input(2, code, CURRENT_TIME, self.root, 0, 0, 0)
-                .map_err(x)?;
-            self.conn
-                .xtest_fake_input(3, code, CURRENT_TIME, self.root, 0, 0, 0)
-                .map_err(x)?;
+            self.key(code, true)?;
+            self.key(code, false)?;
             if shifted {
-                self.conn
-                    .xtest_fake_input(3, shift, CURRENT_TIME, self.root, 0, 0, 0)
-                    .map_err(x)?;
+                self.key(shift, false)?;
             }
-            self.conn.flush().map_err(x)?;
+            self.keys.flush(&self.conn)?;
             count += 1;
             // A short pause keeps slow apps (Wine, remote desktops) from dropping keys.
             thread::sleep(Duration::from_millis(if remapped { 6 } else { 2 }));
@@ -661,16 +684,13 @@ impl Service {
         }
     }
 
-    fn backspace(&self, n: usize) -> Result<(), InjectError> {
+    fn backspace(&mut self, n: usize) -> Result<(), InjectError> {
         self.wait_modifiers_released();
         let k = self.keycode(0xff08)?; // BackSpace
         for _ in 0..n {
-            for kind in [2, 3] {
-                self.conn
-                    .xtest_fake_input(kind, k, CURRENT_TIME, self.root, 0, 0, 0)
-                    .map_err(x)?;
-            }
-            self.conn.flush().map_err(x)?;
+            self.key(k, true)?;
+            self.key(k, false)?;
+            self.keys.flush(&self.conn)?;
             thread::sleep(Duration::from_millis(3));
         }
         Ok(())
@@ -707,23 +727,23 @@ impl Service {
             .ok_or_else(|| InjectError::X11(format!("no keycode for keysym 0x{sym:x}")))
     }
 
-    fn send_paste(&self, terminal: bool) -> Result<(), InjectError> {
+    fn key(&mut self, code: u8, down: bool) -> Result<(), InjectError> {
+        self.keys.key(&self.conn, self.root, code, down)
+    }
+
+    fn send_paste(&mut self, terminal: bool) -> Result<(), InjectError> {
         let mut keys = vec![self.keycode(0xffe3)?]; // Control_L
         if terminal {
             keys.push(self.keycode(0xffe1)?); // Shift_L
         }
         keys.push(self.keycode(0x76)?); // v
         for &k in &keys {
-            self.conn
-                .xtest_fake_input(2, k, CURRENT_TIME, self.root, 0, 0, 0)
-                .map_err(x)?;
+            self.key(k, true)?;
         }
         for &k in keys.iter().rev() {
-            self.conn
-                .xtest_fake_input(3, k, CURRENT_TIME, self.root, 0, 0, 0)
-                .map_err(x)?;
+            self.key(k, false)?;
         }
-        self.conn.flush().map_err(x)?;
+        self.keys.flush(&self.conn)?;
         Ok(())
     }
 
