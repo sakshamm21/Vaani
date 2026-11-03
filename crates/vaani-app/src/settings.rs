@@ -1592,6 +1592,19 @@ fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.general.language = code.to_string());
         });
     }
+    let script = gtk4::DropDown::from_strings(&["देवनागरी (Devanagari)", "Latin (aap kaise ho)"]);
+    script.set_selected(u32::from(cfg.general.hindi_script == "latin"));
+    {
+        let shared = shared.clone();
+        script.connect_selected_notify(move |d| {
+            let v = if d.selected() == 1 {
+                "latin"
+            } else {
+                "devanagari"
+            };
+            update_config(&shared, |c| c.general.hindi_script = v.to_string());
+        });
+    }
     content.append(&card(&[
         row("Where speech is turned into text", "", &radios),
         row(
@@ -1603,6 +1616,11 @@ fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             "Language",
             "Used by cloud engines and Whisper. Parakeet detects its 25 languages on its own.",
             &lang,
+        ),
+        row(
+            "Write Hindi in",
+            "Speech models write Hindi in Devanagari; Latin turns it into Hinglish spelling.",
+            &script,
         ),
     ]));
 

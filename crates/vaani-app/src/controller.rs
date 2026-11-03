@@ -1060,6 +1060,9 @@ impl Job {
                 text = polished;
             }
         }
+        if self.config.general.hindi_script == "latin" {
+            text = vaani_text::hindi::romanize(&text);
+        }
         if text.contains('{') {
             text = self.fill_variables(&text);
         }

@@ -81,6 +81,9 @@ impl Default for Config {
 pub struct General {
     /// Spoken language: "auto" or a BCP-47 code such as "en", "hi".
     pub language: String,
+    /// How Hindi is written: "devanagari" as the model writes it, or "latin" for
+    /// Hinglish spelling ("aap kaise ho").
+    pub hindi_script: String,
     pub autostart: bool,
     /// Play short sounds when dictation starts and stops.
     pub sounds: bool,
@@ -106,6 +109,7 @@ impl Default for General {
     fn default() -> Self {
         Self {
             language: "auto".into(),
+            hindi_script: "devanagari".into(),
             autostart: true,
             sounds: true,
             overlay: true,
@@ -413,6 +417,12 @@ impl Config {
                     "`{}` for {}: use clean, formal, casual, off or leave it empty",
                     r.style, r.app
                 ),
+            });
+        }
+        if !matches!(self.general.hindi_script.as_str(), "devanagari" | "latin") {
+            return Err(ConfigError::Invalid {
+                field: "general.hindi_script",
+                reason: "must be \"devanagari\" or \"latin\"".into(),
             });
         }
         if self.general.language.trim().is_empty() {

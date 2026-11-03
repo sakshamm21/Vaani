@@ -1,5 +1,7 @@
 //! Rule-based cleanup: instant, always on, runs before any optional AI pass.
 
+pub mod hindi;
+
 /// Phrases speech models produce from silence or noise that should never be typed.
 const HALLUCINATIONS: &[&str] = &[
     "thank you.",
