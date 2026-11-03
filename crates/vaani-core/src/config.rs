@@ -85,6 +85,8 @@ pub struct General {
     pub overlay: bool,
     /// Look of the settings window and pill.
     pub theme: Theme,
+    /// The first-run setup page has been completed or skipped.
+    pub onboarded: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -105,6 +107,7 @@ impl Default for General {
             sounds: true,
             overlay: true,
             theme: Theme::System,
+            onboarded: false,
         }
     }
 }

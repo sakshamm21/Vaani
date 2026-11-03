@@ -160,14 +160,19 @@ sudo dnf install gcc gcc-c++ pkgconf clang cmake alsa-lib-devel gtk4-devel \
 
 ## First run
 
-When Vaani starts for the first time it opens the settings window on the **Overview** page.
+When Vaani starts for the first time it opens a setup page with four checks. Each one turns
+pink when it passes.
 
-1. **Download a speech model.** Click **Download** in the status panel to fetch the default
-   model, Parakeet TDT 0.6B v3 (465 MB). Progress is shown in the window. When the download
-   finishes, the model loads automatically. This takes a few seconds.
-2. **Try it.** Click in the test area on the Overview page, hold **Right Ctrl**, say a
-   sentence, and release the key.
-3. **Close the window.** Vaani keeps running in the background and appears in the system tray.
+1. **Speech model.** Click **Download** to fetch the default model, Parakeet TDT 0.6B v3
+   (465 MB). It loads as soon as the download finishes. To use Groq or OpenAI instead, click
+   **Use a Cloud API Key Instead**.
+2. **Shortcut.** Hold **Right Ctrl** for a moment.
+3. **Microphone.** Say a few words while holding the key. If the check stays grey, pick a
+   different microphone in the same row.
+4. **Typing.** Click in the text box, hold the key and speak. Your words appear in the box.
+
+Click **Start Using Vaani** to finish, or **Skip for Now**. The window then shows the
+**Overview** page; close it and Vaani keeps running in the system tray.
 
 Vaani adds itself to your desktop's startup applications, so it starts at every login. You
 can turn this off under **General → Start Vaani when I log in**.

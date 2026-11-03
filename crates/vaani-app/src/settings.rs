@@ -86,6 +86,23 @@ struct Inner {
     last_status: RefCell<Option<EngineStatus>>,
     last_history_check: RefCell<Instant>,
     last_history_top: RefCell<i64>,
+    // First-run setup
+    body: gtk4::Box,
+    setup: RefCell<Option<Setup>>,
+}
+
+/// The first-run page: get a speech engine ready, then three live checks.
+struct Setup {
+    page: gtk4::ScrolledWindow,
+    engine_sub: gtk4::Label,
+    engine_icon: gtk4::Image,
+    engine_btn: gtk4::Button,
+    progress: gtk4::ProgressBar,
+    checks: [(gtk4::Image, gtk4::Label); 3],
+    passed: [bool; 3],
+    text: gtk4::TextView,
+    finish: gtk4::Button,
+    key: String,
 }
 
 pub struct Settings {
@@ -221,6 +238,7 @@ impl Settings {
             .icon_name(crate::keys::app_icon())
             .build();
         window.add_css_class("vaani-settings");
+
         let header = gtk4::HeaderBar::new();
         window.set_titlebar(Some(&header));
 
@@ -257,6 +275,8 @@ impl Settings {
             last_status: RefCell::new(None),
             last_history_check: RefCell::new(Instant::now() - Duration::from_secs(10)),
             last_history_top: RefCell::new(-1),
+            body: gtk4::Box::new(Orientation::Horizontal, 0),
+            setup: RefCell::new(None),
         });
 
         stack.add_titled(&build_home(&inner), Some("home"), "Overview");
@@ -272,11 +292,29 @@ impl Settings {
         sidebar.add_css_class("sidebar");
         sidebar.set_width_request(190);
 
-        let body = gtk4::Box::new(Orientation::Horizontal, 0);
+        let body = inner.body.clone();
         body.append(&sidebar);
         body.append(&gtk4::Separator::new(Orientation::Vertical));
         body.append(&stack);
         window.set_child(Some(&body));
+
+        // First run: a guided page instead of the sidebar. Anyone who has already dictated
+        // (an install from before this page existed) skips it.
+        let cfg = config(&shared);
+        if !cfg.general.onboarded {
+            let used = open_history()
+                .and_then(|h| h.stats().ok())
+                .is_some_and(|(n, _)| n > 0);
+            if used || std::env::var("VAANI_PAGE").is_ok() {
+                update_config(&shared, |c| c.general.onboarded = true);
+            } else {
+                // Shown in place of the whole window body; the normal layout returns when
+                // the setup finishes.
+                let setup = build_setup(&inner);
+                window.set_child(Some(&setup.page));
+                *inner.setup.borrow_mut() = Some(setup);
+            }
+        }
 
         header.pack_end(&inner.theme_btn);
         {
@@ -341,6 +379,7 @@ impl Settings {
     pub fn tick(&self) {
         let i = &self.inner;
         self.sync_theme_button();
+        self.tick_setup();
         // Engine status changes.
         let status = i.shared.engine();
         if i.last_status.borrow().as_ref() != Some(&status) {
@@ -387,6 +426,10 @@ impl Settings {
                 i.hero_progress.set_fraction(frac);
                 i.hero_progress.set_text(Some(&text));
             }
+            if let Some(su) = i.setup.borrow().as_ref() {
+                su.progress.set_fraction(frac);
+                su.progress.set_text(Some(&text));
+            }
             if let Some(res) = &d.finished {
                 finished.push((id.clone(), res.clone()));
             }
@@ -420,6 +463,100 @@ impl Settings {
                 self.refresh_history();
                 self.refresh_home();
             }
+        }
+    }
+
+    fn tick_setup(&self) {
+        let i = &self.inner;
+        let mut slot = i.setup.borrow_mut();
+        let Some(su) = slot.as_mut() else { return };
+        let cfg = config(&i.shared);
+        let downloading = i.downloads.borrow().contains_key(&cfg.engine.local_model);
+        su.progress.set_visible(downloading);
+        let engine = i.shared.engine();
+        let ready = matches!(engine, EngineStatus::Ready(_));
+        let (sub, btn): (String, Option<String>) = match &engine {
+            EngineStatus::Ready(name) => (format!("{name} is ready."), None),
+            EngineStatus::Loading(name) => (format!("Loading {name}…"), None),
+            EngineStatus::Missing(what) if cfg.engine.kind == EngineKind::Local => {
+                let size = vaani_models::find(&cfg.engine.local_model)
+                    .map(|m| m.download_mb)
+                    .unwrap_or(0);
+                if downloading {
+                    (
+                        format!("Downloading {what}. You can run the checks below meanwhile."),
+                        None,
+                    )
+                } else {
+                    (
+                        format!(
+                            "{what} runs on this computer, so your voice never leaves it. One-time {size} MB download."
+                        ),
+                        Some(format!("Download ({size} MB)")),
+                    )
+                }
+            }
+            EngineStatus::Missing(what) => (
+                format!("The cloud engine needs a {what}."),
+                Some("Add Key".to_string()),
+            ),
+            EngineStatus::Failed(e) => (e.clone(), None),
+        };
+        if su.engine_sub.text() != sub {
+            su.engine_sub.set_text(&sub);
+        }
+        su.engine_btn.set_visible(btn.is_some());
+        if let Some(b) = btn {
+            if su.engine_btn.label().as_deref() != Some(b.as_str()) {
+                su.engine_btn.set_label(&b);
+            }
+        }
+        set_check(&su.engine_icon, ready);
+
+        // Live checks: the shortcut starts a recording, the microphone hears speech, and
+        // the transcript lands in the text box (the same path as every other app).
+        let recording = i.shared.state() == vaani_core::state::State::Recording;
+        if recording {
+            su.passed[0] = true;
+            let db = 20.0 * i.shared.level.get().max(1e-6).log10();
+            if db > -45.0 {
+                su.passed[1] = true;
+            }
+        }
+        if su.text.buffer().char_count() > 0 {
+            su.passed[2] = true;
+        }
+        for (k, (icon, _)) in su.checks.iter().enumerate() {
+            set_check(icon, su.passed[k]);
+        }
+        let all = ready && su.passed.iter().all(|p| *p);
+        let want = if all {
+            "Start Using Vaani"
+        } else {
+            "Skip for Now"
+        };
+        if su.finish.label().as_deref() != Some(want) {
+            su.finish.set_label(want);
+            if all {
+                su.finish.add_css_class("suggested-action");
+            }
+        }
+        let key = pretty(&cfg.hotkey.key);
+        if su.key != key {
+            su.key = key.clone();
+            su.checks[0].1.set_text(&format!("Hold {key} for a moment"));
+        }
+    }
+
+    fn finish_setup(&self) {
+        let i = &self.inner;
+        update_config(&i.shared, |c| c.general.onboarded = true);
+        if i.setup.borrow_mut().take().is_some() {
+            i.stack.set_visible_child_name("home");
+            // Swap the body back once the click that got us here has finished.
+            let window = i.window.clone();
+            let body = i.body.clone();
+            glib::idle_add_local_once(move || window.set_child(Some(&body)));
         }
     }
 
@@ -687,6 +824,33 @@ impl Settings {
     }
 }
 
+fn mic_dropdown(shared: &Arc<Shared>, cfg: &Config) -> gtk4::DropDown {
+    let mut mics = vec!["System default".to_string()];
+    mics.extend(vaani_audio::input_devices());
+    let mic_refs: Vec<&str> = mics.iter().map(String::as_str).collect();
+    let mic = gtk4::DropDown::from_strings(&mic_refs);
+    mic.set_selected(
+        mics.iter()
+            .position(|m| *m == cfg.audio.device)
+            .map(|p| p as u32)
+            .unwrap_or(0),
+    );
+    {
+        let shared = shared.clone();
+        let mics = mics.clone();
+        mic.connect_selected_notify(move |d| {
+            let sel = d.selected() as usize;
+            let dev = if sel == 0 {
+                String::new()
+            } else {
+                mics.get(sel).cloned().unwrap_or_default()
+            };
+            update_config(&shared, |c| c.audio.device = dev);
+        });
+    }
+    mic
+}
+
 fn open_history() -> Option<vaani_store::History> {
     vaani_core::paths::data_dir()
         .map(|d| d.join("history.db"))
@@ -781,6 +945,193 @@ fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     }
     content.append(&tiles);
     sw
+}
+
+fn set_check(icon: &gtk4::Image, ok: bool) {
+    let name = if ok {
+        "object-select-symbolic"
+    } else {
+        "media-record-symbolic"
+    };
+    if icon.icon_name().as_deref() != Some(name) {
+        icon.set_icon_name(Some(name));
+        if ok {
+            icon.add_css_class("check-ok");
+        } else {
+            icon.remove_css_class("check-ok");
+        }
+    }
+}
+
+fn check_row(
+    icon: &gtk4::Image,
+    title: &gtk4::Label,
+    sub: &str,
+    widget: Option<&gtk4::Widget>,
+) -> gtk4::Box {
+    let b = gtk4::Box::new(Orientation::Horizontal, 12);
+    b.add_css_class("row");
+    icon.add_css_class("check");
+    icon.set_valign(Align::Center);
+    b.append(icon);
+    let text = gtk4::Box::new(Orientation::Vertical, 2);
+    text.set_hexpand(true);
+    text.set_valign(Align::Center);
+    title.add_css_class("row-title");
+    title.set_xalign(0.0);
+    text.append(title);
+    if !sub.is_empty() {
+        text.append(&label(sub, "row-sub"));
+    }
+    b.append(&text);
+    if let Some(w) = widget {
+        w.set_valign(Align::Center);
+        b.append(w);
+    }
+    b
+}
+
+fn build_setup(inner: &Rc<Inner>) -> Setup {
+    let (page, content) = page(
+        "Welcome to Vaani",
+        "Get a speech engine ready, then run three quick checks. It takes about a minute.",
+    );
+    let cfg = config(&inner.shared);
+    let key = pretty(&cfg.hotkey.key);
+
+    group(&content, "Speech Engine");
+    let engine_icon = gtk4::Image::new();
+    let engine_title = gtk4::Label::new(Some("Speech model"));
+    let engine_btn = gtk4::Button::new();
+    engine_btn.add_css_class("suggested-action");
+    let progress = gtk4::ProgressBar::new();
+    progress.set_show_text(true);
+    progress.set_visible(false);
+    let engine_row = check_row(
+        &engine_icon,
+        &engine_title,
+        "",
+        Some(engine_btn.upcast_ref()),
+    );
+    let engine_sub = label("", "row-sub");
+    if let Some(text) = engine_row.first_child().and_then(|c| c.next_sibling()) {
+        if let Ok(b) = text.downcast::<gtk4::Box>() {
+            b.append(&engine_sub);
+            b.append(&progress);
+        }
+    }
+    {
+        let weak = Rc::downgrade(inner);
+        engine_btn.connect_clicked(move |_| {
+            let Some(inner) = weak.upgrade() else { return };
+            let cfg = config(&inner.shared);
+            let s = Settings { inner };
+            if cfg.engine.kind == EngineKind::Cloud {
+                s.finish_setup();
+                s.inner.stack.set_visible_child_name("cloud");
+            } else if let Some(m) = vaani_models::find(&cfg.engine.local_model) {
+                s.start_download(&m);
+            }
+        });
+    }
+    let cloud = gtk4::Button::with_label("Use a Cloud API Key Instead");
+    cloud.add_css_class("flat");
+    cloud.set_halign(Align::Start);
+    {
+        let weak = Rc::downgrade(inner);
+        cloud.connect_clicked(move |_| {
+            let Some(inner) = weak.upgrade() else { return };
+            let s = Settings { inner };
+            s.finish_setup();
+            s.inner.stack.set_visible_child_name("cloud");
+        });
+    }
+    content.append(&card(&[engine_row]));
+    content.append(&cloud);
+
+    group(&content, "Checks");
+    let mic = mic_dropdown(&inner.shared, &cfg);
+    mic.set_width_request(220);
+    let checks = [
+        (
+            gtk4::Image::new(),
+            gtk4::Label::new(Some(&format!("Hold {key} for a moment"))),
+        ),
+        (
+            gtk4::Image::new(),
+            gtk4::Label::new(Some("Say a few words")),
+        ),
+        (
+            gtk4::Image::new(),
+            gtk4::Label::new(Some("See your words appear")),
+        ),
+    ];
+    let rows = [
+        check_row(
+            &checks[0].0,
+            &checks[0].1,
+            "Your dictation shortcut. You can change it later under General.",
+            None,
+        ),
+        check_row(
+            &checks[1].0,
+            &checks[1].1,
+            "While holding the key. If this stays grey, pick another microphone.",
+            Some(mic.upcast_ref()),
+        ),
+        check_row(
+            &checks[2].0,
+            &checks[2].1,
+            "Click in the box below first, then hold the key and speak.",
+            None,
+        ),
+    ];
+    content.append(&card(&rows));
+
+    let tryit = gtk4::Box::new(Orientation::Vertical, 6);
+    tryit.add_css_class("tryit");
+    tryit.set_margin_top(12);
+    let text = gtk4::TextView::builder()
+        .wrap_mode(gtk4::WrapMode::WordChar)
+        .left_margin(14)
+        .right_margin(14)
+        .top_margin(12)
+        .bottom_margin(12)
+        .height_request(90)
+        .build();
+    tryit.append(&text);
+    content.append(&tryit);
+
+    let finish = gtk4::Button::with_label("Skip for Now");
+    finish.add_css_class("pill");
+    finish.set_halign(Align::End);
+    finish.set_margin_top(18);
+    {
+        let weak = Rc::downgrade(inner);
+        finish.connect_clicked(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                Settings { inner }.finish_setup();
+            }
+        });
+    }
+    content.append(&finish);
+
+    for (icon, _) in &checks {
+        set_check(icon, false);
+    }
+    set_check(&engine_icon, false);
+    Setup {
+        page,
+        engine_sub,
+        engine_icon,
+        engine_btn,
+        progress,
+        checks,
+        passed: [false; 3],
+        text,
+        finish,
+        key,
+    }
 }
 
 fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
@@ -889,29 +1240,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     ]));
 
     group(&content, "Microphone");
-    let mut mics = vec!["System default".to_string()];
-    mics.extend(vaani_audio::input_devices());
-    let mic_refs: Vec<&str> = mics.iter().map(String::as_str).collect();
-    let mic = gtk4::DropDown::from_strings(&mic_refs);
-    mic.set_selected(
-        mics.iter()
-            .position(|m| *m == cfg.audio.device)
-            .map(|p| p as u32)
-            .unwrap_or(0),
-    );
-    {
-        let shared = shared.clone();
-        let mics = mics.clone();
-        mic.connect_selected_notify(move |d| {
-            let sel = d.selected() as usize;
-            let dev = if sel == 0 {
-                String::new()
-            } else {
-                mics.get(sel).cloned().unwrap_or_default()
-            };
-            update_config(&shared, |c| c.audio.device = dev);
-        });
-    }
+    let mic = mic_dropdown(&shared, &cfg);
     mic.set_width_request(260);
     content.append(&card(&[row(
         "Input device",

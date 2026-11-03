@@ -174,6 +174,8 @@ window.vaani-settings list.card > row { background: transparent; }
 window.vaani-settings .card .row, window.vaani-settings .row { padding: 12px 16px; min-height: 36px; }
 window.vaani-settings .row-title { font-weight: 500; font-size: 14px; color: @v_fg; }
 window.vaani-settings .row-sub { color: @v_muted; font-size: 12.5px; }
+window.vaani-settings image.check { color: alpha(@v_muted, 0.45); -gtk-icon-size: 14px; min-width: 22px; }
+window.vaani-settings image.check.check-ok { color: @v_accent; -gtk-icon-size: 18px; }
 
 /* status card (top of Overview) */
 window.vaani-settings .hero {
