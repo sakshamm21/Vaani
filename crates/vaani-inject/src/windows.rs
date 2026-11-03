@@ -491,12 +491,14 @@ impl Service {
 
     /// Offer `text` with delayed rendering, so we see when an app reads it.
     fn offer(&self, text: &str) -> Result<(), InjectError> {
-        PENDING.with(|p| *p.borrow_mut() = Some(utf16z(text)));
         READ_AT.with(|r| r.set(None));
         let _clip = self.open()?;
         // SAFETY: clipboard open; a None handle asks for delayed rendering.
         unsafe {
             EmptyClipboard().map_err(err)?;
+            // Only now: if we owned the clipboard, emptying it sent us WM_DESTROYCLIPBOARD,
+            // which clears PENDING.
+            PENDING.with(|p| *p.borrow_mut() = Some(utf16z(text)));
             // Delayed rendering returns a null handle on success too, which the bindings
             // report as an error: only a real error code counts.
             SetLastError(WIN32_ERROR(0));
