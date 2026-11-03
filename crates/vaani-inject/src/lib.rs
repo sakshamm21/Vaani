@@ -71,6 +71,8 @@ enum Cmd {
     Insert(String, Mode, Sender<Result<Outcome, InjectError>>),
     SetClipboard(String),
     FocusedApp(Sender<String>),
+    Backspace(usize, Sender<Result<(), InjectError>>),
+    ReadClipboard(Sender<String>),
 }
 
 #[derive(Clone)]
@@ -129,6 +131,23 @@ impl Injector {
     }
 
     /// WM_CLASS of the focused window, lowercased (e.g. "firefox", "gnome-terminal").
+    /// Press BackSpace `n` times in the focused window ("scratch that").
+    pub fn backspace(&self, n: usize) -> Result<(), InjectError> {
+        let (tx, rx) = bounded(1);
+        self.send(Cmd::Backspace(n, tx))?;
+        rx.recv_timeout(Duration::from_secs(30))
+            .map_err(|_| InjectError::X11("backspace timed out".into()))?
+    }
+
+    /// The clipboard's text, or an empty string (for snippets with `{clipboard}`).
+    pub fn clipboard_text(&self) -> String {
+        let (tx, rx) = bounded(1);
+        if self.send(Cmd::ReadClipboard(tx)).is_err() {
+            return String::new();
+        }
+        rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default()
+    }
+
     pub fn focused_app(&self) -> String {
         let (tx, rx) = bounded(1);
         if self.send(Cmd::FocusedApp(tx)).is_err() {
@@ -269,6 +288,12 @@ impl Service {
                 }
                 Ok(Cmd::FocusedApp(reply)) => {
                     let _ = reply.send(self.focused_class());
+                }
+                Ok(Cmd::Backspace(n, reply)) => {
+                    let _ = reply.send(self.backspace(n));
+                }
+                Ok(Cmd::ReadClipboard(reply)) => {
+                    let _ = reply.send(self.clipboard_text());
                 }
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return,
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
@@ -589,6 +614,35 @@ impl Service {
                 return;
             }
             thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn backspace(&self, n: usize) -> Result<(), InjectError> {
+        self.wait_modifiers_released();
+        let k = self.keycode(0xff08)?; // BackSpace
+        for _ in 0..n {
+            for kind in [2, 3] {
+                self.conn
+                    .xtest_fake_input(kind, k, CURRENT_TIME, self.root, 0, 0, 0)
+                    .map_err(x)?;
+            }
+            self.conn.flush().map_err(x)?;
+            thread::sleep(Duration::from_millis(3));
+        }
+        Ok(())
+    }
+
+    fn clipboard_text(&self) -> String {
+        if self.owned {
+            return self
+                .offer
+                .get(&self.a.utf8)
+                .map(|(_, b)| String::from_utf8_lossy(b).into_owned())
+                .unwrap_or_default();
+        }
+        match self.fetch(self.a.utf8) {
+            Ok(Some((_, bytes, 8))) => String::from_utf8_lossy(&bytes).into_owned(),
+            _ => String::new(),
         }
     }
 

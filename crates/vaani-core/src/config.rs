@@ -238,6 +238,8 @@ pub struct Dictionary {
     pub spoken_commands: bool,
     /// Whole words or phrases replaced after transcription, ignoring case.
     pub replacements: Vec<Replacement>,
+    /// Say the trigger phrase and the saved text is inserted.
+    pub snippets: Vec<Snippet>,
 }
 
 impl Default for Dictionary {
@@ -245,8 +247,17 @@ impl Default for Dictionary {
         Self {
             spoken_commands: true,
             replacements: Vec::new(),
+            snippets: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Snippet {
+    /// What you say ("my address").
+    pub trigger: String,
+    /// What is inserted. `{date}`, `{time}` and `{clipboard}` are filled in.
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

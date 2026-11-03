@@ -1625,6 +1625,7 @@ fn build_dictionary(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         ("“comma”, “full stop”", ",  ."),
         ("“question mark”, “exclamation mark”", "?  !"),
         ("“colon”, “semicolon”", ":  ;"),
+        ("“scratch that”", "removes your last dictation"),
     ] {
         let w = label(writes, "row-sub");
         w.set_wrap(false);
@@ -1731,7 +1732,106 @@ fn build_dictionary(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             to.grab_focus();
         });
     }
+
+    build_snippets(&content, &shared);
     sw
+}
+
+fn build_snippets(content: &gtk4::Box, shared: &Arc<Shared>) {
+    group(content, "Snippets");
+    content.append(&label(
+        "Say a short phrase and Vaani inserts the saved text: an address, a signature, a \
+         template. {date}, {time} and {clipboard} are filled in when you use it.",
+        "row-sub",
+    ));
+    let list = gtk4::Box::new(Orientation::Vertical, 0);
+    list.add_css_class("card");
+    list.set_margin_top(10);
+    content.append(&list);
+
+    fn rebuild(list: &gtk4::Box, shared: &Arc<Shared>) {
+        while let Some(c) = list.first_child() {
+            list.remove(&c);
+        }
+        let snippets = config(shared).dictionary.snippets;
+        if snippets.is_empty() {
+            list.append(&row(
+                "No snippets yet",
+                "For example: “sign off” → “Best regards,” and your name on the next line.",
+                &gtk4::Box::new(Orientation::Horizontal, 0),
+            ));
+            return;
+        }
+        for (i, sn) in snippets.iter().enumerate() {
+            if i > 0 {
+                list.append(&gtk4::Separator::new(Orientation::Horizontal));
+            }
+            let del = gtk4::Button::from_icon_name("user-trash-symbolic");
+            del.add_css_class("flat");
+            del.set_tooltip_text(Some("Remove"));
+            {
+                let (list, shared, trig) = (list.clone(), shared.clone(), sn.trigger.clone());
+                del.connect_clicked(move |_| {
+                    update_config(&shared, |c| {
+                        c.dictionary.snippets.retain(|s| s.trigger != trig)
+                    });
+                    rebuild(&list, &shared);
+                });
+            }
+            let preview: String = sn.text.replace('\n', " ⏎ ").chars().take(90).collect();
+            list.append(&row(&format!("“{}”", sn.trigger), &preview, &del));
+        }
+    }
+    rebuild(&list, shared);
+
+    let editor = gtk4::Box::new(Orientation::Vertical, 8);
+    editor.set_margin_top(10);
+    let trigger = gtk4::Entry::builder()
+        .placeholder_text("When I say, e.g. “my address”")
+        .build();
+    let frame = gtk4::Box::new(Orientation::Vertical, 0);
+    frame.add_css_class("tryit");
+    let body = gtk4::TextView::builder()
+        .wrap_mode(gtk4::WrapMode::WordChar)
+        .left_margin(12)
+        .right_margin(12)
+        .top_margin(8)
+        .bottom_margin(8)
+        .height_request(64)
+        .build();
+    frame.append(&body);
+    let add = gtk4::Button::with_label("Add Snippet");
+    add.add_css_class("suggested-action");
+    add.set_halign(Align::End);
+    editor.append(&trigger);
+    editor.append(&frame);
+    editor.append(&add);
+    content.append(&editor);
+    {
+        let (list, shared) = (list.clone(), shared.clone());
+        add.connect_clicked(move |_| {
+            let buf = body.buffer();
+            let t = trigger.text().trim().to_string();
+            let text = buf
+                .text(&buf.start_iter(), &buf.end_iter(), false)
+                .trim_end()
+                .to_string();
+            if t.is_empty() || text.is_empty() {
+                return;
+            }
+            update_config(&shared, |c| {
+                c.dictionary
+                    .snippets
+                    .retain(|s| !s.trigger.eq_ignore_ascii_case(&t));
+                c.dictionary
+                    .snippets
+                    .push(vaani_core::config::Snippet { trigger: t, text });
+            });
+            trigger.set_text("");
+            buf.set_text("");
+            rebuild(&list, &shared);
+        });
+    }
 }
 
 fn build_history(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {

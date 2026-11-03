@@ -27,6 +27,8 @@ pub struct Rules {
     pub spoken_commands: bool,
     /// Whole-word replacements, matched without regard to case: (heard, written).
     pub replacements: Vec<(String, String)>,
+    /// Trigger phrase -> saved text. Saying only the trigger inserts just the text.
+    pub snippets: Vec<(String, String)>,
 }
 
 impl Default for Rules {
@@ -36,6 +38,7 @@ impl Default for Rules {
             trailing_space: true,
             spoken_commands: true,
             replacements: Vec::new(),
+            snippets: Vec::new(),
         }
     }
 }
@@ -140,6 +143,34 @@ fn apply_replacements(text: &str, pairs: &[(String, String)]) -> String {
     text
 }
 
+/// Words that undo the previous dictation instead of being typed.
+const SCRATCH: &[&str] = &["scratch that", "delete that", "undo that"];
+
+/// True when the whole dictation is "scratch that" (or "delete that", "undo that").
+pub fn is_scratch(raw: &str) -> bool {
+    let bare: String = raw
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    SCRATCH.contains(&bare.as_str())
+}
+
+fn apply_snippets(text: &str, snippets: &[(String, String)]) -> String {
+    let bare = text
+        .trim_end_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace())
+        .trim_start();
+    for (trigger, body) in snippets {
+        if !trigger.trim().is_empty() && bare.eq_ignore_ascii_case(trigger.trim()) {
+            return body.clone();
+        }
+    }
+    apply_replacements(text, snippets)
+}
+
 /// Clean raw model output. Returns None when there is nothing worth inserting.
 pub fn clean(raw: &str, rules: &Rules) -> Option<String> {
     let mut text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -154,6 +185,9 @@ pub fn clean(raw: &str, rules: &Rules) -> Option<String> {
     }
     if !rules.replacements.is_empty() {
         text = apply_replacements(&text, &rules.replacements);
+    }
+    if !rules.snippets.is_empty() {
+        text = apply_snippets(&text, &rules.snippets);
     }
     let text = text.trim_matches(' ');
     if text.trim().is_empty()
@@ -287,5 +321,29 @@ mod tests {
     #[test]
     fn unicode_is_kept() {
         assert_eq!(c("नमस्ते दुनिया"), Some("नमस्ते दुनिया".into()));
+    }
+
+    #[test]
+    fn scratch_that() {
+        assert!(is_scratch("Scratch that."));
+        assert!(is_scratch(" delete that "));
+        assert!(!is_scratch("Please scratch that idea."));
+    }
+
+    #[test]
+    fn snippets() {
+        let rules = Rules {
+            snippets: vec![("my address".into(), "12 Park Street\nDelhi".into())],
+            trailing_space: false,
+            ..Rules::default()
+        };
+        assert_eq!(
+            clean("My address.", &rules).as_deref(),
+            Some("12 Park Street\nDelhi")
+        );
+        assert_eq!(
+            clean("Send it to my address please.", &rules).as_deref(),
+            Some("Send it to 12 Park Street\nDelhi please.")
+        );
     }
 }

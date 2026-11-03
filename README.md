@@ -41,7 +41,7 @@
 | **Private by default** | Twelve local speech models through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): Parakeet, Whisper, Moonshine and SenseVoice. No account, no telemetry. |
 | **Fast cloud option** | Bring your own key for Groq, OpenAI or any OpenAI-compatible server. Keys live in your system keyring. |
 | **Never loses a word** | If the model is still loading, Vaani waits for it. If an app ignores the paste, the text is typed instead. If the cloud is unreachable, an installed local model takes over. |
-| **Spoken commands** | Say "new line", "new paragraph", "full stop" or "question mark". Add your own word replacements in the Dictionary. |
+| **Spoken commands** | Say "new line", "full stop" or "scratch that". Save snippets and word replacements in the Dictionary. |
 | **Two ways to talk** | Hold the key to talk, or tap once for hands-free and tap again to finish. Esc cancels. |
 | **Light and dark** | Follows your desktop theme, or set it yourself from the title bar. |
 | **Lightweight** | Native GTK 4, no browser engine. The app uses 115 MB of memory and 0% CPU when idle; the default model adds 850 MB. |
@@ -202,9 +202,14 @@ media controls (Spotify, browsers, most players) pause while you speak and resum
 | "new line" / "next line" | A line break |
 | "new paragraph" / "next paragraph" | A blank line |
 | "full stop", "comma", "question mark", "exclamation mark", "colon", "semicolon" | The punctuation mark |
+| "scratch that" / "delete that" (on its own) | Removes your previous dictation, if it was in the last 10 minutes |
 
-Commands can be turned off under **Dictionary**. The same page holds your replacements: say
-"my email" and have Vaani write the address, or fix a name the model keeps misspelling.
+Commands can be turned off under **Dictionary**. The same page holds:
+
+- **Replacements**: a word or phrase the model writes, and what to write instead. Use it for
+  names and brands the model misspells.
+- **Snippets**: a phrase you say, and the text Vaani inserts for it, such as an address or an
+  email sign-off. `{date}`, `{time}` and `{clipboard}` are filled in when the snippet is used.
 
 Text is inserted by placing it on the clipboard and sending a paste shortcut to the focused
 window (Ctrl+V, or Ctrl+Shift+V in terminals). Your previous clipboard contents are restored
@@ -260,7 +265,7 @@ immediately.
 downloaded models. **Keep everything on this computer** turns cloud recognition off
 entirely, so audio never leaves the machine.
 
-**Dictionary** turns spoken commands on or off and manages word replacements.
+**Dictionary** turns spoken commands on or off and manages replacements and snippets.
 
 **Cloud** configures the provider, API key, model and endpoint for cloud recognition.
 

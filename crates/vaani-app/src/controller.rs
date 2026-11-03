@@ -524,6 +524,46 @@ struct Job {
 }
 
 impl Job {
+    /// Delete the last dictation with BackSpace, if it was inserted in the last 10 minutes.
+    fn scratch_last(&self) {
+        let last = self
+            .shared
+            .last_text
+            .lock()
+            .ok()
+            .and_then(|mut l| l.take())
+            .filter(|(at, _)| at.elapsed() < Duration::from_secs(600));
+        let (Some((_, text)), Some(injector)) = (last, &self.injector) else {
+            crate::notify::send(
+                "Nothing to scratch",
+                "There's no recent dictation to remove.",
+            );
+            return;
+        };
+        let n = text.chars().count();
+        match injector.backspace(n) {
+            Ok(()) => tracing::info!(chars = n, "scratched the last dictation"),
+            Err(e) => tracing::warn!("scratch that failed: {e}"),
+        }
+    }
+
+    /// `{date}`, `{time}` and `{clipboard}` in snippets.
+    fn fill_variables(&self, text: &str) -> String {
+        let now = chrono::Local::now();
+        let mut out = text
+            .replace("{date}", &now.format("%-d %B %Y").to_string())
+            .replace("{time}", &now.format("%H:%M").to_string());
+        if out.contains("{clipboard}") {
+            let clip = self
+                .injector
+                .as_ref()
+                .map(|i| i.clipboard_text())
+                .unwrap_or_default();
+            out = out.replace("{clipboard}", &clip);
+        }
+        out
+    }
+
     /// Transcribe with the configured local model when the cloud engine failed.
     fn local_fallback(&self, samples: &[f32]) -> Option<(String, String)> {
         if self.config.engine.kind != EngineKind::Cloud {
@@ -603,6 +643,11 @@ impl Job {
                 }
             },
         };
+        // "Scratch that": remove the previous dictation instead of typing anything.
+        if self.config.dictionary.spoken_commands && vaani_text::is_scratch(&raw) {
+            self.scratch_last();
+            return;
+        }
         let rules = vaani_text::Rules {
             remove_fillers: self.config.cleanup.remove_fillers,
             trailing_space: self.config.insert.trailing_space,
@@ -614,11 +659,21 @@ impl Job {
                 .iter()
                 .map(|r| (r.from.clone(), r.to.clone()))
                 .collect(),
+            snippets: self
+                .config
+                .dictionary
+                .snippets
+                .iter()
+                .map(|s| (s.trigger.clone(), s.text.clone()))
+                .collect(),
         };
-        let Some(text) = vaani_text::clean(&raw, &rules) else {
+        let Some(mut text) = vaani_text::clean(&raw, &rules) else {
             tracing::debug!("nothing to insert");
             return;
         };
+        if text.contains('{') {
+            text = self.fill_variables(&text);
+        }
         let app = self
             .injector
             .as_ref()
