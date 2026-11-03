@@ -6,6 +6,7 @@
 # usage: powershell -File scripts\windows-smoke-test.ps1 <setup.exe> <screenshot dir>
 param([string]$Setup, [string]$Shots = "screenshots")
 $ErrorActionPreference = "Stop"
+$env:NO_COLOR = "1"
 New-Item -ItemType Directory -Force $Shots | Out-Null
 $Shots = (Resolve-Path $Shots).Path
 
@@ -31,7 +32,13 @@ function Shot($name) {
   $g.Dispose(); $bmp.Dispose()
 }
 function Fail($msg) { Shot "failure"; throw $msg }
-function Vaani { $out = & $script:Exe @args 2>&1 | Out-String; Write-Host $out.TrimEnd(); return $out }
+# Log lines on stderr are not failures: only the exit code is.
+function Vaani {
+  $ErrorActionPreference = "Continue"
+  $out = & $script:Exe @args 2>&1 | ForEach-Object { "$_" } | Out-String
+  Write-Host $out.TrimEnd()
+  return $out
+}
 
 Step "Install (silent, per user)"
 Start-Process $Setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
