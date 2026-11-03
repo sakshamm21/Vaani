@@ -118,6 +118,7 @@ Shot "5-notepad"
 $restored = Get-Clipboard -Raw
 [Keys]::Down(0x11, 0, $false); [Keys]::Down(0x41, 0, $false); [Keys]::Up(0x41, 0, $false); [Keys]::Up(0x11, 0, $false)
 Start-Sleep -Milliseconds 300
+Set-Clipboard -Value "(Notepad was empty)"
 [Keys]::Down(0x11, 0, $false); [Keys]::Down(0x43, 0, $false); [Keys]::Up(0x43, 0, $false); [Keys]::Up(0x11, 0, $false)
 Start-Sleep -Milliseconds 500
 $typed = Get-Clipboard -Raw
@@ -144,6 +145,7 @@ for ($i = 0; $i -lt 30; $i++) {
 Start-Sleep 2
 [Keys]::Down(0x11, 0, $false); [Keys]::Down(0x41, 0, $false); [Keys]::Up(0x41, 0, $false); [Keys]::Up(0x11, 0, $false)
 Start-Sleep -Milliseconds 300
+Set-Clipboard -Value "(Notepad was empty)"
 [Keys]::Down(0x11, 0, $false); [Keys]::Down(0x43, 0, $false); [Keys]::Up(0x43, 0, $false); [Keys]::Up(0x11, 0, $false)
 Start-Sleep -Milliseconds 500
 $typed = Get-Clipboard -Raw

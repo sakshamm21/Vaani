@@ -20,7 +20,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Sender, bounded, unbounded};
 use windows::Win32::Foundation::{
-    CloseHandle, GlobalFree, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
+    CloseHandle, GlobalFree, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, SetLastError,
+    WIN32_ERROR, WPARAM,
 };
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardOwner,
@@ -496,7 +497,14 @@ impl Service {
         // SAFETY: clipboard open; a None handle asks for delayed rendering.
         unsafe {
             EmptyClipboard().map_err(err)?;
-            SetClipboardData(CF_UNICODETEXT, None).map_err(err)?;
+            // Delayed rendering returns a null handle on success too, which the bindings
+            // report as an error: only a real error code counts.
+            SetLastError(WIN32_ERROR(0));
+            if let Err(e) = SetClipboardData(CF_UNICODETEXT, None) {
+                if e.code().is_err() {
+                    return Err(err(e));
+                }
+            }
         }
         self.put_private_markers();
         LOST.with(|l| l.set(false));
@@ -885,6 +893,24 @@ mod tests {
         assert!(is_terminal(&exe_stem(
             r"C:\Program Files\WindowsApps\Microsoft.WindowsTerminal\WindowsTerminal.exe"
         )));
+    }
+
+    /// Offer text with delayed rendering, read it as an app would, then restore what was
+    /// there before. Uses the real clipboard, so it runs on a desktop session only.
+    #[test]
+    fn offer_read_restore() {
+        let hwnd = create_window().expect("window");
+        let svc = Service::new(hwnd);
+        svc.put_text("before").expect("put");
+        let saved = svc.save();
+        svc.offer("dictated ✓").expect("offer");
+        assert_eq!(svc.read_text(), "dictated ✓");
+        assert!(
+            READ_AT.with(|r| r.get()).is_some(),
+            "the read was not noticed"
+        );
+        svc.restore(saved).expect("restore");
+        assert_eq!(svc.read_text(), "before");
     }
 
     #[test]
