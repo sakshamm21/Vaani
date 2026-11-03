@@ -26,12 +26,11 @@ const W: i32 = 232;
 const H: i32 = 44;
 const BARS: usize = 22;
 const MARGIN_BOTTOM: i32 = 72;
-/// The live preview caption sits above the pill, in the same window, which is this wide
-/// and click-through so its empty parts never get in the way.
-const WIN_W: i32 = 480;
+/// The live preview caption sits above the pill, in the same window. The window grows to
+/// fit it only while it is shown, because some compositors (Hyprland) blur and shadow the
+/// whole window, transparent parts included. It is click-through either way.
 const CAPTION_H: i32 = 34;
 const GAP: i32 = 8;
-const WIN_H: i32 = CAPTION_H + GAP + H;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
@@ -58,6 +57,9 @@ pub struct Overlay {
     anim: Rc<RefCell<Anim>>,
     xconn: Option<Rc<RustConnection>>,
     xid: Rc<Cell<u32>>,
+    /// The monitor the pill went to when it appeared, and the window size it was placed for.
+    monitor: Rc<Cell<(i32, i32, i32, i32)>>,
+    placed_size: Cell<(i32, i32)>,
     shown_done_for: RefCell<Option<Instant>>,
 }
 
@@ -66,8 +68,8 @@ impl Overlay {
         let window = gtk4::Window::builder()
             .decorated(false)
             .resizable(false)
-            .default_width(WIN_W)
-            .default_height(WIN_H)
+            .default_width(W)
+            .default_height(H)
             .focusable(false)
             .can_focus(false)
             .css_classes(["vaani-overlay"])
@@ -100,10 +102,9 @@ impl Overlay {
         caption.set_halign(gtk4::Align::Center);
         caption.set_valign(gtk4::Align::End);
         caption.append(&caption_text);
-        caption.set_opacity(0.0);
+        caption.set_visible(false);
 
         let column = gtk4::Box::new(gtk4::Orientation::Vertical, GAP);
-        column.set_size_request(WIN_W, WIN_H);
         column.append(&caption);
         column.append(&row);
         window.set_child(Some(&column));
@@ -137,13 +138,17 @@ impl Overlay {
                 }
             });
         }
+        let monitor = Rc::new(Cell::new((0, 0, 1920, 1080)));
         {
             let xconn = xconn.clone();
             let xid = xid.clone();
+            let monitor = monitor.clone();
             window.connect_map(move |w| {
                 if let Some(c) = &xconn {
                     make_unfocusable(c, xid.get());
-                    place(c, w, xid.get());
+                    monitor.set(pointer_monitor(c, w));
+                    let scale = w.scale_factor().max(1);
+                    place(c, xid.get(), monitor.get(), (W * scale, H * scale), scale);
                 }
             });
         }
@@ -159,6 +164,8 @@ impl Overlay {
             anim,
             xconn,
             xid,
+            monitor,
+            placed_size: Cell::new((0, 0)),
             shown_done_for: RefCell::new(None),
         }
     }
@@ -222,12 +229,12 @@ impl Overlay {
             _ => String::new(),
         };
         if words.is_empty() {
-            self.caption.set_opacity(0.0);
+            self.caption.set_visible(false);
         } else {
             if self.caption_text.text() != words {
                 self.caption_text.set_text(&words);
             }
-            self.caption.set_opacity(1.0);
+            self.caption.set_visible(true);
         }
 
         match mode {
@@ -292,11 +299,25 @@ impl Overlay {
         if !self.window.is_visible() {
             self.window.set_visible(true);
         } else if let Some(c) = &self.xconn {
+            let id = self.xid.get();
+            // The window grew or shrank with the caption: keep it bottom-centred.
+            let size = c
+                .get_geometry(id)
+                .ok()
+                .and_then(|r| r.reply().ok())
+                .map(|g| (i32::from(g.width), i32::from(g.height)));
+            if let Some(size) = size.filter(|s| *s != self.placed_size.get()) {
+                self.placed_size.set(size);
+                place(
+                    c,
+                    id,
+                    self.monitor.get(),
+                    size,
+                    self.window.scale_factor().max(1),
+                );
+            }
             // Keep it on top of windows that were raised meanwhile.
-            let _ = c.configure_window(
-                self.xid.get(),
-                &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
-            );
+            let _ = c.configure_window(id, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
             let _ = c.flush();
         }
         self.area.queue_draw();
@@ -316,19 +337,33 @@ fn make_unfocusable(c: &RustConnection, id: u32) {
         wm_hints,
         &[1, 0, 0, 0, 0, 0, 0, 0, 0],
     );
+    // Hyprland focuses an override-redirect XWayland window when it appears unless its type
+    // says it is a notification, tooltip or similar; the pill would then take the keys meant
+    // for the app.
+    let atom = |name: &[u8]| {
+        c.intern_atom(false, name)
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .map(|r| r.atom)
+    };
+    if let (Some(prop), Some(kind)) = (
+        atom(b"_NET_WM_WINDOW_TYPE"),
+        atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION"),
+    ) {
+        let _ = c.change_property32(PropMode::REPLACE, id, prop, AtomEnum::ATOM, &[kind]);
+    }
     let _ = c.change_window_attributes(id, &ChangeWindowAttributesAux::new().override_redirect(1));
     let _ = c.flush();
 }
 
-/// Bottom centre of the monitor the mouse pointer is on.
-fn place(c: &RustConnection, w: &gtk4::Window, id: u32) {
+/// Bottom centre of `monitor` (x, y, width, height) for a window of `size`, in device pixels.
+fn place(c: &RustConnection, id: u32, monitor: (i32, i32, i32, i32), size: (i32, i32), scale: i32) {
     if id == 0 {
         return;
     }
-    let (mx, my, mw, mh) = pointer_monitor(c, w);
-    let scale = w.scale_factor().max(1);
-    let x = mx + (mw - WIN_W * scale) / 2;
-    let y = my + mh - (WIN_H + MARGIN_BOTTOM) * scale;
+    let (mx, my, mw, mh) = monitor;
+    let x = mx + (mw - size.0) / 2;
+    let y = my + mh - size.1 - MARGIN_BOTTOM * scale;
     let _ = c.configure_window(
         id,
         &ConfigureWindowAux::new()

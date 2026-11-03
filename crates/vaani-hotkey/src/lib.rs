@@ -20,6 +20,7 @@ use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 mod evdev;
+mod hyprland;
 mod portal;
 
 #[derive(Debug, thiserror::Error)]

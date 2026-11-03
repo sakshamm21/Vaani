@@ -3,7 +3,10 @@
 //! can't be read. The desktop asks the user once to confirm the shortcut and lets them
 //! change it in its own settings.
 //!
-//! Limits: desktops don't accept a lone modifier such as Right Ctrl as a shortcut, so a
+//! On Hyprland the portal leaves the shortcuts unbound, so they are bound through Hyprland
+//! itself (see `hyprland.rs`), with any key including a lone modifier.
+//!
+//! Limits elsewhere: desktops don't accept a lone modifier such as Right Ctrl as a shortcut, so a
 //! modifier hotkey is offered as Ctrl+Alt+Space instead, and Esc can't be watched without
 //! taking it away from every app, so cancelling is done from the pill or the tray.
 
@@ -18,7 +21,7 @@ use futures_util::StreamExt;
 
 use crate::{HotkeyError, HotkeyEvent, Listener, Watch, keysym_for};
 
-const APP_ID: &str = "io.github.sakshamm21.Vaani";
+pub(crate) const APP_ID: &str = "io.github.sakshamm21.Vaani";
 const ID: &str = "dictate";
 const COMMAND_ID: &str = "command";
 
@@ -66,6 +69,12 @@ fn preferred_trigger(key: &str) -> String {
 pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
     let trigger = preferred_trigger(&watch.key);
     let command = !watch.command.is_empty();
+    let hyprland = crate::hyprland::running();
+    if hyprland {
+        if let Ok(mut t) = TRIGGER.lock() {
+            *t = Some(watch.key.clone());
+        }
+    }
     let key = Arc::new(Mutex::new(watch));
     let stop = Arc::new(AtomicBool::new(false));
     let listener = Listener {
@@ -86,12 +95,20 @@ pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyE
                     return;
                 }
             };
-            rt.block_on(run(trigger, command, tx, stop, ready_tx));
+            rt.block_on(run(hyprland, trigger, command, tx, stop, ready_tx));
         })
         .map_err(|e| HotkeyError::Io(e.to_string()))?;
     // Binding can wait on the user confirming in a desktop dialog.
     match ready_rx.recv_timeout(Duration::from_secs(120)) {
-        Ok(Ok(())) => Ok(listener),
+        Ok(Ok(())) => {
+            if hyprland {
+                let (watch, stop) = (listener.key.clone(), listener.stop.clone());
+                let _ = thread::Builder::new()
+                    .name("hyprland-binds".into())
+                    .spawn(move || crate::hyprland::keep_bound(watch, stop, ID, COMMAND_ID));
+            }
+            Ok(listener)
+        }
         Ok(Err(e)) => Err(e),
         Err(_) => Err(HotkeyError::Portal(
             "the desktop did not answer the shortcut request".into(),
@@ -100,6 +117,7 @@ pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyE
 }
 
 async fn run(
+    hyprland: bool,
     trigger: String,
     command: bool,
     tx: Sender<HotkeyEvent>,
@@ -139,7 +157,7 @@ async fn run(
                 trigger = s.trigger_description(),
                 "hotkey set (portal)"
             );
-            if s.id() == ID {
+            if s.id() == ID && !hyprland {
                 if let Ok(mut t) = TRIGGER.lock() {
                     *t = Some(readable(s.trigger_description()));
                 }

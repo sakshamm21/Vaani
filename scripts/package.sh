@@ -59,6 +59,9 @@ cat > "$DEB/DEBIAN/postinst" <<'POSTINST'
 set -e
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
 command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
+# Where uinput is a module that isn't loaded yet, /dev/uinput is a placeholder that udev only
+# re-reads at boot; loading the module makes the new rule apply now.
+modprobe uinput 2>/dev/null || true
 if command -v udevadm >/dev/null; then
   udevadm control --reload || true
   udevadm trigger --subsystem-match=misc --action=change || true
@@ -92,6 +95,7 @@ Works on X11 and Wayland desktops.
 cp -a $RPM/root/. %{buildroot}/
 
 %post
+modprobe uinput >/dev/null 2>&1 || :
 udevadm control --reload >/dev/null 2>&1 || :
 udevadm trigger --subsystem-match=misc --action=change >/dev/null 2>&1 || :
 
@@ -140,7 +144,7 @@ gtk-update-icon-cache -q -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || tr
 echo "Installed. Start Vaani from your app menu, or run: ~/.local/bin/vaani"
 if [ ! -w /dev/uinput ]; then
   echo "On Wayland, also run this once so Vaani can press the paste key:"
-  echo "  sudo install -m644 lib/udev/rules.d/70-vaani-uinput.rules /etc/udev/rules.d/ && sudo udevadm trigger --subsystem-match=misc --action=change"
+  echo "  sudo install -m644 lib/udev/rules.d/70-vaani-uinput.rules /etc/udev/rules.d/ && sudo modprobe uinput && sudo udevadm trigger --subsystem-match=misc --action=change"
 fi
 INSTALL
 chmod 755 "$DIST/$TAR/install.sh"
@@ -162,6 +166,7 @@ depends=('gtk4' 'alsa-lib' 'libx11' 'libxi' 'libxcb' 'libxkbcommon')
 optdepends=('gnome-keyring: store API keys' 'kwallet: store API keys on KDE')
 provides=('vaani')
 conflicts=('vaani')
+install=vaani-bin.install
 source=("https://github.com/sakshamm21/vaani/releases/download/v\$pkgver/$TAR.tar.gz")
 sha256sums=('$TAR_SUM')
 
@@ -173,5 +178,14 @@ package() {
 }
 PKGBUILD
 
-(cd "$DIST" && shopt -s nullglob && sha256sum *.deb *.rpm *.tar.gz PKGBUILD > SHA256SUMS)
+# pacman reloads udev rules itself, but /dev/uinput only picks up the new rule once the
+# module is loaded.
+cat > "$DIST/vaani-bin.install" <<'HOOK'
+post_install() {
+  modprobe uinput 2>/dev/null || true
+  udevadm trigger --subsystem-match=misc --action=change 2>/dev/null || true
+}
+HOOK
+
+(cd "$DIST" && shopt -s nullglob && sha256sum *.deb *.rpm *.tar.gz PKGBUILD vaani-bin.install > SHA256SUMS)
 ls -l "$DIST"

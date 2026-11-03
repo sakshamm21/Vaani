@@ -86,6 +86,7 @@ update-desktop-database -q "$SHARE/applications" >/dev/null 2>&1 || true
 if [[ ! -w /dev/uinput ]] && [[ ! -e /etc/udev/rules.d/70-vaani-uinput.rules ]]; then
   say "Allowing Vaani to press keys on Wayland (udev rule for /dev/uinput)"
   $SUDO install -m644 assets/70-vaani-uinput.rules /etc/udev/rules.d/70-vaani-uinput.rules &&
+    { $SUDO modprobe uinput 2>/dev/null || true; } &&
     $SUDO udevadm control --reload && $SUDO udevadm trigger --subsystem-match=misc --action=change ||
     warn "Couldn't add the udev rule; on Wayland, Vaani will leave text on the clipboard instead."
 fi
