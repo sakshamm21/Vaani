@@ -224,7 +224,15 @@ impl Overlay {
                 }
             }
             Mode::Processing => {
-                self.label.set_text("Transcribing");
+                let loading = matches!(self.shared.engine(), EngineStatus::Loading(_));
+                let text = if loading {
+                    "Loading model"
+                } else {
+                    "Transcribing"
+                };
+                if self.label.text() != text {
+                    self.label.set_text(text);
+                }
                 self.hint.set_visible(false);
             }
             Mode::Done => {

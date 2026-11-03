@@ -5,8 +5,9 @@
 //! X11 clipboards live in the owning process, so a background thread keeps serving the
 //! restored clipboard until someone copies something new.
 //!
-//! "Never lose words": if no app reads the text, it stays on the clipboard and the caller
-//! tells the user to paste it by hand.
+//! "Never lose words": if no app reads the pasted text, it is typed key by key instead
+//! (XTest, with a spare keycode remapped for characters the keyboard layout lacks). If that
+//! fails too, the text stays on the clipboard and the caller tells the user to paste it.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -40,6 +41,18 @@ fn x<E: std::fmt::Display>(e: E) -> InjectError {
     InjectError::X11(e.to_string())
 }
 
+/// How text gets into the focused app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// Paste, and type the text if the app doesn't take the paste.
+    #[default]
+    Auto,
+    /// Paste only; leave the text on the clipboard if the app doesn't take it.
+    Paste,
+    /// Type key by key; never touch the clipboard.
+    Type,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// The focused app read our text after `after`.
@@ -48,12 +61,14 @@ pub enum Outcome {
         terminal: bool,
         app: String,
     },
+    /// Typed key by key (the app ignored the paste, or typing was asked for).
+    Typed { app: String, chars: usize },
     /// Nobody read it; the text is left on the clipboard.
     LeftOnClipboard { app: String },
 }
 
 enum Cmd {
-    Insert(String, Sender<Result<Outcome, InjectError>>),
+    Insert(String, Mode, Sender<Result<Outcome, InjectError>>),
     SetClipboard(String),
     FocusedApp(Sender<String>),
 }
@@ -96,10 +111,15 @@ impl Injector {
         Ok(())
     }
 
-    /// Insert text into the focused app. Blocks until pasted or given up (about 1.5 s max).
+    /// Insert text into the focused app. Blocks until pasted or typed.
     pub fn insert(&self, text: &str) -> Result<Outcome, InjectError> {
+        self.insert_with(text, Mode::Auto)
+    }
+
+    /// Insert text with an explicit [`Mode`].
+    pub fn insert_with(&self, text: &str, mode: Mode) -> Result<Outcome, InjectError> {
         let (tx, rx) = bounded(1);
-        self.send(Cmd::Insert(text.to_string(), tx))?;
+        self.send(Cmd::Insert(text.to_string(), mode, tx))?;
         rx.recv().map_err(|_| InjectError::Gone)?
     }
 
@@ -239,8 +259,8 @@ impl Service {
             let mut drain = [0u8; 64];
             while matches!(wake.read(&mut drain), Ok(n) if n > 0) {}
             match rx.try_recv() {
-                Ok(Cmd::Insert(text, reply)) => {
-                    let r = self.insert(&text);
+                Ok(Cmd::Insert(text, mode, reply)) => {
+                    let r = self.insert(&text, mode);
                     let _ = reply.send(r);
                 }
                 Ok(Cmd::SetClipboard(text)) => {
@@ -316,9 +336,13 @@ impl Service {
         Ok(())
     }
 
-    fn insert(&mut self, text: &str) -> Result<Outcome, InjectError> {
+    fn insert(&mut self, text: &str, mode: Mode) -> Result<Outcome, InjectError> {
         let app = self.focused_class();
         let terminal = is_terminal(&app);
+        if mode == Mode::Type {
+            let chars = self.type_text(text)?;
+            return Ok(Outcome::Typed { app, chars });
+        }
 
         // 1. Save the user's clipboard (or keep what we already serve for them).
         let saved = if self.owned {
@@ -382,6 +406,20 @@ impl Service {
                 tracing::debug!(%app, "no read after paste; assuming the app used its prefetched copy");
                 Instant::now()
             }
+            None if mode == Mode::Auto => {
+                tracing::info!(%app, "the app ignored the paste; typing the text instead");
+                let typed = self.type_text(text);
+                self.restore(saved)?;
+                return match typed {
+                    Ok(chars) => Ok(Outcome::Typed { app, chars }),
+                    Err(e) => {
+                        tracing::warn!(%app, "typing failed too: {e}");
+                        let offer = self.text_offer(text);
+                        self.own(offer)?;
+                        Ok(Outcome::LeftOnClipboard { app })
+                    }
+                };
+            }
             None => {
                 tracing::warn!(%app, "no app read the dictated text; leaving it on the clipboard");
                 return Ok(Outcome::LeftOnClipboard { app });
@@ -390,6 +428,16 @@ impl Service {
         let after = read_at.duration_since(started);
 
         // 4. Put the old clipboard back.
+        self.restore(saved)?;
+        Ok(Outcome::Pasted {
+            after,
+            terminal,
+            app,
+        })
+    }
+
+    /// Give the clipboard back to what the user had before we took it.
+    fn restore(&mut self, saved: Offer) -> Result<(), InjectError> {
         if self.owned {
             if saved.is_empty() {
                 self.offer.clear();
@@ -402,11 +450,101 @@ impl Service {
             }
             let _ = self.conn.flush();
         }
-        Ok(Outcome::Pasted {
-            after,
-            terminal,
-            app,
-        })
+        Ok(())
+    }
+
+    /// Type `text` into the focused window with XTest. Characters on the current layout use
+    /// their own key (with Shift if needed); anything else (accents, scripts, emoji) goes
+    /// through a spare keycode remapped to that character for the moment it is pressed.
+    fn type_text(&mut self, text: &str) -> Result<usize, InjectError> {
+        // A typed Return in a terminal would run the command, so never type one there.
+        let flat;
+        let text = if is_terminal(&self.focused_class()) && text.contains('\n') {
+            flat = text.replace('\n', " ");
+            flat.as_str()
+        } else {
+            text
+        };
+        self.wait_modifiers_released();
+        let setup = self.conn.setup();
+        let (min, max) = (setup.min_keycode, setup.max_keycode);
+        let map = self
+            .conn
+            .get_keyboard_mapping(min, max - min + 1)
+            .map_err(x)?
+            .reply()
+            .map_err(x)?;
+        let per = usize::from(map.keysyms_per_keycode).max(1);
+        // keysym -> (keycode, needs shift), from the first two levels only.
+        let mut direct: BTreeMap<u32, (u8, bool)> = BTreeMap::new();
+        let mut spare = None;
+        for (i, syms) in map.keysyms.chunks(per).enumerate() {
+            let code = min + i as u8;
+            if syms.iter().all(|&s| s == 0) {
+                // Prefer a high, unused keycode so we never shadow a real key.
+                spare = Some(code);
+                continue;
+            }
+            for (level, &sym) in syms.iter().take(2).enumerate() {
+                if sym != 0 {
+                    direct.entry(sym).or_insert((code, level == 1));
+                }
+            }
+        }
+        let shift = self.keycode(0xffe1)?;
+        let mut remapped = false;
+        let mut count = 0;
+        for ch in text.chars() {
+            let sym = keysym_for(ch);
+            let (code, shifted) = match direct.get(&sym) {
+                Some(&k) => k,
+                None => {
+                    let Some(code) = spare else {
+                        return Err(InjectError::X11(format!("no key to type {ch:?}")));
+                    };
+                    let mut syms = vec![0u32; per];
+                    syms[0] = sym;
+                    if per > 1 {
+                        syms[1] = sym;
+                    }
+                    self.conn
+                        .change_keyboard_mapping(1, code, per as u8, &syms)
+                        .map_err(x)?;
+                    // Let clients see the new mapping before the key arrives.
+                    self.conn.get_input_focus().map_err(x)?.reply().map_err(x)?;
+                    thread::sleep(Duration::from_millis(8));
+                    remapped = true;
+                    (code, false)
+                }
+            };
+            if shifted {
+                self.conn
+                    .xtest_fake_input(2, shift, CURRENT_TIME, self.root, 0, 0, 0)
+                    .map_err(x)?;
+            }
+            self.conn
+                .xtest_fake_input(2, code, CURRENT_TIME, self.root, 0, 0, 0)
+                .map_err(x)?;
+            self.conn
+                .xtest_fake_input(3, code, CURRENT_TIME, self.root, 0, 0, 0)
+                .map_err(x)?;
+            if shifted {
+                self.conn
+                    .xtest_fake_input(3, shift, CURRENT_TIME, self.root, 0, 0, 0)
+                    .map_err(x)?;
+            }
+            self.conn.flush().map_err(x)?;
+            count += 1;
+            // A short pause keeps slow apps (Wine, remote desktops) from dropping keys.
+            thread::sleep(Duration::from_millis(if remapped { 6 } else { 2 }));
+        }
+        if let (true, Some(code)) = (remapped, spare) {
+            let _ = self
+                .conn
+                .change_keyboard_mapping(1, code, per as u8, &vec![0u32; per]);
+            let _ = self.conn.flush();
+        }
+        Ok(count)
     }
 
     /// Answer clipboard requests for `dur`; sets `read` if anyone fetched the text itself.
@@ -644,6 +782,19 @@ impl Service {
 }
 
 /// Block until any of `fds` is readable or `timeout_ms` passes (no busy polling).
+/// The X keysym that types `ch`.
+fn keysym_for(ch: char) -> u32 {
+    match ch {
+        '\n' => 0xff0d, // Return
+        '\t' => 0xff09, // Tab
+        '\u{8}' => 0xff08,
+        c if (' '..='~').contains(&c) => c as u32,
+        // Latin-1 keysyms equal their code points.
+        c if ('\u{a0}'..='\u{ff}').contains(&c) => c as u32,
+        c => 0x0100_0000 + c as u32,
+    }
+}
+
 fn wait_readable(fds: &[std::os::fd::BorrowedFd<'_>], timeout_ms: i32) {
     use rustix::event::{PollFd, PollFlags, Timespec};
     let mut p: Vec<PollFd<'_>> = fds
@@ -660,6 +811,15 @@ fn wait_readable(fds: &[std::os::fd::BorrowedFd<'_>], timeout_ms: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keysyms() {
+        assert_eq!(keysym_for('a'), 0x61);
+        assert_eq!(keysym_for('\n'), 0xff0d);
+        assert_eq!(keysym_for('é'), 0xe9);
+        assert_eq!(keysym_for('न'), 0x0100_0928);
+        assert_eq!(keysym_for('😀'), 0x0101_f600);
+    }
 
     #[test]
     fn terminal_detection() {

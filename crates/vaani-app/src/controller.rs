@@ -492,6 +492,31 @@ struct Job {
 }
 
 impl Job {
+    /// Transcribe with the configured local model when the cloud engine failed.
+    fn local_fallback(&self, samples: &[f32]) -> Option<(String, String)> {
+        if self.config.engine.kind != EngineKind::Cloud {
+            return None;
+        }
+        let model =
+            vaani_models::find(&self.config.engine.local_model).filter(|m| m.is_installed())?;
+        tracing::warn!(model = %model.id, "cloud transcription failed; using the local model");
+        let threads = vaani_models::default_threads() as u32;
+        let mut engine = LocalEngine::new(model, threads);
+        match engine.transcribe(samples, &self.config.general.language) {
+            Ok(t) => {
+                crate::notify::send(
+                    "Cloud unavailable",
+                    "Vaani used the local model for this dictation.",
+                );
+                Some((t.text, engine.name()))
+            }
+            Err(e) => {
+                tracing::error!("local fallback failed too: {e}");
+                None
+            }
+        }
+    }
+
     fn run(self, samples: Vec<f32>) {
         let released = Instant::now();
         let audio_ms = (samples.len() as u64 * 1000 / 16_000) as i64;
@@ -499,7 +524,19 @@ impl Job {
             tracing::debug!(audio_ms, "too short; ignored");
             return;
         }
-        let (raw, engine_name) = {
+        // A dictation made while the model is still loading waits for it instead of being
+        // dropped. The pill keeps showing "Transcribing" meanwhile.
+        let wait_until = Instant::now() + Duration::from_secs(120);
+        while matches!(self.shared.engine(), EngineStatus::Loading(_))
+            && Instant::now() < wait_until
+            && !self.cancel.load(Ordering::Relaxed)
+        {
+            thread::sleep(Duration::from_millis(100));
+        }
+        if self.cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let result = {
             let Ok(mut slot) = self.engine.lock() else {
                 return;
             };
@@ -509,22 +546,30 @@ impl Job {
                         format!("Download the {m} model in Vaani settings first.")
                     }
                     EngineStatus::Failed(e) => e,
-                    _ => "The speech model isn't loaded yet.".into(),
+                    _ => "The speech model didn't finish loading.".into(),
                 };
                 crate::notify::send("Vaani can't transcribe yet", &msg);
                 return;
             };
-            match engine.transcribe(&samples, &self.config.general.language) {
-                Ok(t) => {
-                    tracing::info!(audio_ms, took_ms = t.took.as_millis() as u64, "transcribed");
-                    (t.text, engine.name())
-                }
-                Err(e) => {
+            engine
+                .transcribe(&samples, &self.config.general.language)
+                .map(|t| (t, engine.name()))
+        };
+        let (raw, engine_name) = match result {
+            Ok((t, name)) => {
+                tracing::info!(audio_ms, took_ms = t.took.as_millis() as u64, "transcribed");
+                (t.text, name)
+            }
+            Err(e) => match self.local_fallback(&samples) {
+                // The cloud failed (offline, quota, outage): use the local model if one is
+                // installed, so the words are not lost.
+                Some(done) => done,
+                None => {
                     tracing::error!("transcription failed: {e}");
                     crate::notify::send("Transcription failed", &e.to_string());
                     return;
                 }
-            }
+            },
         };
         let rules = vaani_text::Rules {
             remove_fillers: self.config.cleanup.remove_fillers,
@@ -563,28 +608,35 @@ impl Job {
             crate::notify::send("Couldn't type the text", "It's saved in Vaani history.");
             return;
         };
-        match injector.insert(&text) {
+        let mode = match self.config.insert.method {
+            vaani_core::config::InsertMethod::Auto => vaani_inject::Mode::Auto,
+            vaani_core::config::InsertMethod::Paste => vaani_inject::Mode::Paste,
+            vaani_core::config::InsertMethod::Type => vaani_inject::Mode::Type,
+        };
+        let done = |how: &str, app: &str| {
+            let latency = released.elapsed();
+            tracing::info!(%app, how, latency_ms = latency.as_millis() as u64, "inserted");
+            if let (Some(h), Some(id)) = (&self.history, id) {
+                if let Ok(h) = h.lock() {
+                    let _ = h.mark_inserted(id, latency.as_millis() as i64);
+                }
+            }
+            if let Ok(mut l) = self.shared.last_text.lock() {
+                *l = Some((Instant::now(), text.clone()));
+            }
+        };
+        match injector.insert_with(&text, mode) {
+            Ok(Outcome::Typed { app, chars }) => {
+                tracing::debug!(chars, "typed");
+                done("typed", &app);
+            }
             Ok(Outcome::Pasted {
                 after,
                 terminal,
                 app,
             }) => {
-                let latency = released.elapsed();
-                tracing::info!(
-                    %app,
-                    terminal,
-                    paste_ms = after.as_millis() as u64,
-                    latency_ms = latency.as_millis() as u64,
-                    "inserted"
-                );
-                if let (Some(h), Some(id)) = (&self.history, id) {
-                    if let Ok(h) = h.lock() {
-                        let _ = h.mark_inserted(id, latency.as_millis() as i64);
-                    }
-                }
-                if let Ok(mut l) = self.shared.last_text.lock() {
-                    *l = Some((Instant::now(), text));
-                }
+                tracing::debug!(terminal, paste_ms = after.as_millis() as u64, "pasted");
+                done("pasted", &app);
             }
             Ok(Outcome::LeftOnClipboard { app }) => {
                 let where_ = if app.is_empty() {
