@@ -34,11 +34,14 @@ pub enum InjectError {
     X11(String),
     #[error("cannot use the virtual keyboard (/dev/uinput): {0}")]
     Uinput(String),
+    #[error("Wayland clipboard: {0}")]
+    Wayland(String),
     #[error("the insertion thread stopped")]
     Gone,
 }
 
 mod keys;
+mod wayland;
 use keys::Keys;
 
 fn x<E: std::fmt::Display>(e: E) -> InjectError {
@@ -94,13 +97,27 @@ impl Injector {
         wake_rx.set_nonblocking(true).map_err(x)?;
         thread::Builder::new()
             .name("inject".into())
-            .spawn(move || match Service::new() {
-                Ok(mut s) => {
-                    let _ = ready_tx.send(Ok(()));
-                    s.run(rx, wake_rx);
+            .spawn(move || {
+                if wayland_session() && wayland::available() {
+                    match wayland::Service::new() {
+                        Ok(mut s) => {
+                            tracing::info!("text insertion: Wayland data-control and uinput");
+                            let _ = ready_tx.send(Ok(()));
+                            return s.run(rx, wake_rx);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Wayland clipboard unavailable, trying XWayland: {e}")
+                        }
+                    }
                 }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
+                match Service::new() {
+                    Ok(mut s) => {
+                        let _ = ready_tx.send(Ok(()));
+                        s.run(rx, wake_rx);
+                    }
+                    Err(e) => {
+                        let _ = ready_tx.send(Err(e));
+                    }
                 }
             })
             .map_err(x)?;
@@ -217,6 +234,11 @@ const TERMINALS: &[&str] = &[
     "warp",
     "cool-retro-term",
 ];
+
+/// Whether the compositor offers the wlr data-control clipboard (for `vaani doctor`).
+pub fn wayland_clipboard() -> bool {
+    wayland_session() && wayland::available()
+}
 
 /// Whether /dev/uinput can be opened for writing (for `vaani doctor`).
 pub fn uinput_usable() -> bool {

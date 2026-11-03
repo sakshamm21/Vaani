@@ -114,6 +114,11 @@ fn components(session: &SessionInfo) -> Vec<Component> {
     v.push(component(
         "text insertion",
         match (session.session_type, session.x11_display.is_some()) {
+            (SessionType::Wayland, _)
+                if vaani_inject::wayland_clipboard() && vaani_inject::uinput_usable() =>
+            {
+                Ok("Wayland data-control clipboard, keys via a uinput virtual keyboard".into())
+            }
             (_, false) => Err("needs XWayland or an X11 display for the clipboard".into()),
             (SessionType::Wayland, true) if vaani_inject::uinput_usable() => {
                 Ok("clipboard via XWayland, keys via a uinput virtual keyboard".into())

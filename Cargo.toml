@@ -51,6 +51,9 @@ crossbeam-channel = "0.5"
 evdev = "0.13"
 ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts"] }
 futures-util = "0.3"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+xkbcommon = { version = "0.9", default-features = false }
 hound = "3.5"
 gtk4 = "0.11"
 gdk4-x11 = "0.11"

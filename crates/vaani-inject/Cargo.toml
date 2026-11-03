@@ -1,6 +1,6 @@
 [package]
 name = "vaani-inject"
-description = "Text insertion: X11 clipboard paste with restore"
+description = "Text insertion: clipboard paste with restore on X11 and Wayland"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,11 +10,15 @@ authors.workspace = true
 
 [dependencies]
 x11rb.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["pipe", "fs"] }
 thiserror.workspace = true
 tracing.workspace = true
 crossbeam-channel.workspace = true
 evdev.workspace = true
+wayland-client.workspace = true
+wayland-protocols-wlr.workspace = true
+xkbcommon.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

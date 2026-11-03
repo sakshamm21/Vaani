@@ -19,11 +19,17 @@ use crate::InjectError;
 pub(crate) enum Keys {
     XTest,
     Uinput(VirtualDevice),
+    /// Keys are only logged (VAANI_INJECT_DRY_RUN=1, for testing against a nested desktop
+    /// without pressing keys in the real one).
+    Dry,
 }
 
 impl Keys {
     /// A uinput keyboard that can press every standard key.
     pub(crate) fn uinput() -> Result<Self, InjectError> {
+        if std::env::var_os("VAANI_INJECT_DRY_RUN").is_some() {
+            return Ok(Self::Dry);
+        }
         let mut keys = AttributeSet::<KeyCode>::new();
         for code in 1..=248 {
             keys.insert(KeyCode::new(code));
@@ -56,11 +62,21 @@ impl Keys {
                     .map_err(crate::x)?;
                 Ok(())
             }
-            Self::Uinput(dev) => {
-                let evdev = u16::from(code.saturating_sub(8));
-                dev.emit(&[InputEvent::new(EventType::KEY.0, evdev, i32::from(down))])
-                    .map_err(|e| InjectError::Uinput(e.to_string()))
+            _ => self.evdev(u16::from(code.saturating_sub(8)), down),
+        }
+    }
+
+    /// Press or release an evdev key (uinput only).
+    pub(crate) fn evdev(&mut self, code: u16, down: bool) -> Result<(), InjectError> {
+        match self {
+            Self::XTest => Err(InjectError::Uinput("no virtual keyboard".into())),
+            Self::Dry => {
+                tracing::info!(code, down, "key (dry run)");
+                Ok(())
             }
+            Self::Uinput(dev) => dev
+                .emit(&[InputEvent::new(EventType::KEY.0, code, i32::from(down))])
+                .map_err(|e| InjectError::Uinput(e.to_string())),
         }
     }
 
