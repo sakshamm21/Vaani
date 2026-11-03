@@ -71,4 +71,13 @@ fn lighter_rendering() {
         // SAFETY: called first thing in main, before any other thread exists.
         unsafe { std::env::set_var("GSK_RENDERER", "cairo") };
     }
+    // On Wayland the pill must sit above other windows without taking focus, which plain
+    // Wayland windows can't do on every desktop. Through XWayland it is an override-redirect
+    // window, so run the UI there when XWayland is available.
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
+    let x = std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty());
+    if wayland && x && std::env::var_os("GDK_BACKEND").is_none() {
+        // SAFETY: as above.
+        unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    }
 }

@@ -2376,10 +2376,10 @@ fn build_about(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             if let Some(p) = &path {
                 let _ = std::fs::create_dir_all(p);
                 let uri = format!("file://{}", p.display());
-                let _ = gtk4::gio::AppInfo::launch_default_for_uri(
-                    &uri,
-                    None::<&gtk4::gio::AppLaunchContext>,
-                );
+                // Don't pass on the XWayland backend Vaani may run its own UI with.
+                let ctx = gtk4::gio::AppLaunchContext::new();
+                ctx.unsetenv("GDK_BACKEND");
+                let _ = gtk4::gio::AppInfo::launch_default_for_uri(&uri, Some(&ctx));
             }
         }
     };
