@@ -208,9 +208,14 @@ pub fn portal_available() -> bool {
     portal::available()
 }
 
-/// Start listening for `key` with the best backend for this session. Events go to `tx`.
-pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<(Listener, Backend), HotkeyError> {
-    let b = backend();
+/// Start listening for `key`, with `backend` or else the best one for this session.
+/// Events go to `tx`.
+pub fn listen(
+    key: &str,
+    backend: Option<Backend>,
+    tx: Sender<HotkeyEvent>,
+) -> Result<(Listener, Backend), HotkeyError> {
+    let b = backend.unwrap_or_else(self::backend);
     let l = match b {
         Backend::X11 => listen_x11(key, tx)?,
         Backend::Evdev => evdev::listen(key, tx)?,

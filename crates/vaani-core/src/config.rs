@@ -52,6 +52,8 @@ pub struct Config {
     pub cleanup: Cleanup,
     pub dictionary: Dictionary,
     pub insert: Insert,
+    /// Per-app overrides, first match wins.
+    pub apps: Vec<AppRule>,
     pub privacy: Privacy,
     pub logging: Logging,
 }
@@ -67,6 +69,7 @@ impl Default for Config {
             cleanup: Cleanup::default(),
             dictionary: Dictionary::default(),
             insert: Insert::default(),
+            apps: Vec::new(),
             privacy: Privacy::default(),
             logging: Logging::default(),
         }
@@ -314,6 +317,31 @@ impl Default for Insert {
     }
 }
 
+/// Settings for one app, matched against its window class or app id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AppRule {
+    /// Part of the app's id, ignoring case ("slack", "thunderbird", "code").
+    pub app: String,
+    /// AI clean-up style for this app ("clean", "formal", "casual"), "off" for none, or
+    /// empty to use the main setting.
+    pub style: String,
+    /// How to insert text here; unset uses the main setting.
+    pub insert: Option<InsertMethod>,
+    /// Space after each dictation; unset uses the main setting.
+    pub trailing_space: Option<bool>,
+}
+
+impl Config {
+    /// The first app rule whose `app` is part of `app_id` (lowercase).
+    pub fn rule_for(&self, app_id: &str) -> Option<&AppRule> {
+        let id = app_id.to_ascii_lowercase();
+        self.apps
+            .iter()
+            .find(|r| !r.app.trim().is_empty() && id.contains(&r.app.trim().to_ascii_lowercase()))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Privacy {
@@ -369,6 +397,19 @@ impl Config {
             return Err(ConfigError::Invalid {
                 field: "privacy.keep_history",
                 reason: "must be a number of dictations, 0 for none, or -1 for all".into(),
+            });
+        }
+        if let Some(r) = self
+            .apps
+            .iter()
+            .find(|r| !matches!(r.style.as_str(), "" | "clean" | "formal" | "casual" | "off"))
+        {
+            return Err(ConfigError::Invalid {
+                field: "apps.style",
+                reason: format!(
+                    "`{}` for {}: use clean, formal, casual, off or leave it empty",
+                    r.style, r.app
+                ),
             });
         }
         if self.general.language.trim().is_empty() {
@@ -605,6 +646,30 @@ mod tests {
         assert_eq!(c.hotkey.mode, HotkeyMode::Toggle);
         assert_eq!(c.hotkey.key, "RightCtrl");
         assert_eq!(c.engine, Engine::default());
+    }
+
+    #[test]
+    fn app_rules() {
+        let text = "version = 1\n[[apps]]\napp = \"Slack\"\nstyle = \"casual\"\n\
+                    [[apps]]\napp = \"code\"\nstyle = \"off\"\ninsert = \"type\"\n";
+        let (c, _) = Config::from_toml(text, p()).unwrap();
+        assert_eq!(
+            c.rule_for("slack").map(|r| r.style.as_str()),
+            Some("casual")
+        );
+        let code = c.rule_for("code-oss").unwrap();
+        assert_eq!(code.insert, Some(InsertMethod::Type));
+        assert_eq!(code.trailing_space, None);
+        assert!(c.rule_for("firefox").is_none());
+        let (back, _) = Config::from_toml(&c.to_toml(), p()).unwrap();
+        assert_eq!(back, c);
+        assert!(
+            Config::from_toml(
+                "version = 1\n[[apps]]\napp = \"x\"\nstyle = \"loud\"\n",
+                p()
+            )
+            .is_err()
+        );
     }
 
     #[test]

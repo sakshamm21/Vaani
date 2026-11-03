@@ -255,8 +255,19 @@ impl Controller {
     }
 
     fn start_hotkey(&mut self) {
+        use vaani_core::config::HotkeyBackend as B;
+        let backend = match self.config.hotkey.backend {
+            B::Auto => None,
+            B::X11 => Some(vaani_hotkey::Backend::X11),
+            B::Evdev => Some(vaani_hotkey::Backend::Evdev),
+            B::Portal => Some(vaani_hotkey::Backend::Portal),
+            B::Cli => {
+                tracing::info!("hotkey: only `vaani toggle` (set in config)");
+                return;
+            }
+        };
         let (htx, hrx) = crossbeam_channel::unbounded();
-        match vaani_hotkey::listen(&self.config.hotkey.key, htx) {
+        match vaani_hotkey::listen(&self.config.hotkey.key, backend, htx) {
             Ok((l, backend)) => {
                 tracing::info!(backend = backend.label(), "hotkey listening");
                 self.hotkey = Some(l);
@@ -711,6 +722,11 @@ impl Job {
         if !c.ai_enabled {
             return None;
         }
+        let style = match self.config.rule_for(app).map(|r| r.style.as_str()) {
+            Some("off") => return None,
+            Some(s) if !s.is_empty() => s,
+            _ => c.style.as_str(),
+        };
         // Terminals and code editors get exactly what was said.
         if vaani_inject::is_terminal(app) || matches!(app, "code" | "code-oss" | "vscodium") {
             return None;
@@ -744,7 +760,7 @@ impl Job {
             model: &c.ai_model,
             api_key: &key,
             prompt: &c.ai_prompt,
-            style: vaani_llm::Style::from_id(&c.style),
+            style: vaani_llm::Style::from_id(style),
             extra: &c.ai_instruction,
             dictionary: &dictionary,
             timeout: Duration::from_millis(c.ai_timeout_ms.clamp(300, 10_000)),
@@ -907,9 +923,17 @@ impl Job {
             self.scratch_last();
             return;
         }
+        let app = self
+            .injector
+            .as_ref()
+            .map(|i| i.focused_app())
+            .unwrap_or_default();
+        let rule = self.config.rule_for(&app);
         let rules = vaani_text::Rules {
             remove_fillers: self.config.cleanup.remove_fillers,
-            trailing_space: self.config.insert.trailing_space,
+            trailing_space: rule
+                .and_then(|r| r.trailing_space)
+                .unwrap_or(self.config.insert.trailing_space),
             spoken_commands: self.config.dictionary.spoken_commands,
             replacements: self
                 .config
@@ -930,11 +954,6 @@ impl Job {
             tracing::debug!("nothing to insert");
             return;
         };
-        let app = self
-            .injector
-            .as_ref()
-            .map(|i| i.focused_app())
-            .unwrap_or_default();
         let snippet = rules
             .snippets
             .iter()
@@ -974,7 +993,10 @@ impl Job {
             crate::notify::send("Couldn't type the text", "It's saved in Vaani history.");
             return;
         };
-        let mode = match self.config.insert.method {
+        let method = rule
+            .and_then(|r| r.insert)
+            .unwrap_or(self.config.insert.method);
+        let mode = match method {
             vaani_core::config::InsertMethod::Auto => vaani_inject::Mode::Auto,
             vaani_core::config::InsertMethod::Paste => vaani_inject::Mode::Paste,
             vaani_core::config::InsertMethod::Type => vaani_inject::Mode::Type,
