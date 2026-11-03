@@ -1,0 +1,33 @@
+name: winprobe
+on:
+  push:
+    branches: ["claude/**"]
+    paths: [".github/workflows/winprobe.yml"]
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        shell: bash
+        run: |
+          ls "/c/Program Files (x86)/Inno Setup 6" || echo "no inno"
+          which iscc pkg-config pkgconf || true
+          gh release list --repo wingtk/gvsbuild --limit 3
+          gh release view --repo wingtk/gvsbuild --json assets -q '.assets[].name'
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: GTK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo wingtk/gvsbuild --pattern 'GTK4_Gvsbuild_*_x64.zip' --dir /c/dl
+          ls -la /c/dl
+          mkdir -p /c/gtk && cd /c/gtk && unzip -q /c/dl/*.zip
+          ls; ls bin | head -200; ls bin | wc -l; du -sh bin
+          ls lib | head -80; ls lib/pkgconfig | head -100
+          ls -R share | grep -v "\.mo$" | head -150
+          ls lib/gdk-pixbuf-2.0/*/loaders || true
+          cat lib/pkgconfig/gtk4.pc
+          head -5 lib/pkgconfig/glib-2.0.pc
