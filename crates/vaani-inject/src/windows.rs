@@ -402,10 +402,11 @@ impl Service {
         }
     }
 
-    /// Open the clipboard, retrying while another app holds it.
+    /// Open the clipboard, retrying while another app holds it. Clipboard monitors (history,
+    /// Remote Desktop, sync tools) open it right after every change, so allow them a second.
     fn open(&self) -> Result<Clip, InjectError> {
         let mut last = None;
-        for _ in 0..20 {
+        for _ in 0..100 {
             // SAFETY: opening with our own window as the owner.
             match unsafe { OpenClipboard(Some(self.hwnd)) } {
                 Ok(()) => return Ok(Clip),
@@ -595,7 +596,9 @@ impl Service {
             None if mode == Mode::Auto => {
                 tracing::info!(%app, "the app ignored the paste; typing the text instead");
                 let typed = type_text(text);
-                self.restore(saved)?;
+                if let Err(e) = self.restore(saved) {
+                    tracing::warn!("could not put the previous clipboard back: {e}");
+                }
                 return match typed {
                     Ok(chars) => Ok(Outcome::Typed { app, chars }),
                     Err(e) => {
@@ -614,9 +617,12 @@ impl Service {
         let after = read_at.duration_since(started);
 
         // 4. Put the old clipboard back once the app has its copy.
+        // The text is in the app by now, so a failure here only costs the old clipboard.
         self.pump_for(Duration::from_millis(150));
         if !lost() {
-            self.restore(saved)?;
+            if let Err(e) = self.restore(saved) {
+                tracing::warn!("could not put the previous clipboard back: {e}");
+            }
         }
         Ok(Outcome::Pasted {
             after,

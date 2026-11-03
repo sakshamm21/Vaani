@@ -31,7 +31,11 @@ function Shot($name) {
   $bmp.Save("$Shots\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
   $g.Dispose(); $bmp.Dispose()
 }
-function Fail($msg) { Shot "failure"; throw $msg }
+function Logs {
+  Get-ChildItem "$env:LOCALAPPDATA\sakshamm21\vaani\data\logs" -ErrorAction SilentlyContinue |
+    ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 80 | Write-Host }
+}
+function Fail($msg) { Shot "failure"; Logs; throw $msg }
 # Log lines on stderr are not failures: only the exit code is.
 function Vaani {
   $ErrorActionPreference = "Continue"
@@ -70,6 +74,7 @@ $tts.Dispose()
 
 Step "Start Vaani"
 $env:VAANI_FAKE_MIC = $Wav
+$env:VAANI_LOG = "debug"
 Start-Process $Exe -ArgumentList "run"
 $ready = $false
 for ($i = 0; $i -lt 90; $i++) {
