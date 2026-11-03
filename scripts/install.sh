@@ -12,6 +12,10 @@ BIN="$HOME/.local/bin"
 SHARE="$HOME/.local/share"
 ID=io.github.sakshamm21.Vaani
 
+# Root (as in a container) needs no sudo.
+SUDO=sudo
+[[ $(id -u) -eq 0 ]] && SUDO=
+
 say() { printf '\033[1;35m▸\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
 
@@ -21,23 +25,36 @@ if [[ "${1:-}" == "--uninstall" ]]; then
         "$SHARE/icons/hicolor/scalable/apps/$ID.svg" "$SHARE/icons/hicolor/scalable/apps/$ID-dark.svg" \
         "$HOME/.config/autostart/$ID.desktop"
   rm -rf "$SHARE/fonts/vaani"
+  [[ -e /etc/udev/rules.d/70-vaani-uinput.rules ]] && $SUDO rm -f /etc/udev/rules.d/70-vaani-uinput.rules
   say "Vaani removed. Your settings, history and models are still in ~/.config/vaani and ~/.local/share/vaani."
   exit 0
 fi
 
 # 1. Build dependencies (Debian, Ubuntu, Mint, Pop!_OS and friends).
-need=()
-for pkg in build-essential pkg-config clang cmake libasound2-dev libgtk-4-dev \
-           libx11-dev libxi-dev libxtst-dev libxcb1-dev; do
-  dpkg -s "$pkg" >/dev/null 2>&1 || need+=("$pkg")
-done
-if ((${#need[@]})); then
-  if command -v apt-get >/dev/null; then
+# Build packages, by package manager.
+if command -v apt-get >/dev/null; then
+  need=()
+  for pkg in build-essential pkg-config clang cmake libasound2-dev libgtk-4-dev \
+             libx11-dev libxi-dev libxtst-dev libxcb1-dev libxkbcommon-dev; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || need+=("$pkg")
+  done
+  if ((${#need[@]})); then
     say "Installing build packages: ${need[*]}"
-    sudo apt-get install -y "${need[@]}"
-  else
-    warn "Please install the equivalents of: ${need[*]}"
+    $SUDO apt-get install -y "${need[@]}"
   fi
+elif command -v dnf >/dev/null; then
+  pkgs=(gcc gcc-c++ make pkgconf clang cmake alsa-lib-devel gtk4-devel libX11-devel
+        libXi-devel libXtst-devel libxcb-devel libxkbcommon-devel)
+  rpm -q "${pkgs[@]}" >/dev/null 2>&1 || { say "Installing build packages"; $SUDO dnf install -y "${pkgs[@]}"; }
+elif command -v pacman >/dev/null; then
+  pkgs=(base-devel pkgconf clang cmake alsa-lib gtk4 libx11 libxi libxtst libxcb libxkbcommon)
+  pacman -T "${pkgs[@]}" >/dev/null 2>&1 || { say "Installing build packages"; $SUDO pacman -S --needed --noconfirm "${pkgs[@]}"; }
+elif command -v zypper >/dev/null; then
+  pkgs=(gcc gcc-c++ make pkgconf clang cmake alsa-devel gtk4-devel libX11-devel libXi-devel
+        libXtst-devel libxcb-devel libxkbcommon-devel)
+  rpm -q "${pkgs[@]}" >/dev/null 2>&1 || { say "Installing build packages"; $SUDO zypper --non-interactive install "${pkgs[@]}"; }
+else
+  warn "Unknown package manager. Please install a C/C++ toolchain, clang, cmake, pkg-config and the development files for ALSA, GTK 4, X11 (Xi, Xtst, xcb) and xkbcommon."
 fi
 if ! command -v cargo >/dev/null; then
   [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
@@ -64,6 +81,14 @@ sed "s|^Exec=vaani|Exec=$BIN/vaani|" assets/$ID.desktop > "$SHARE/applications/$
 fc-cache -f "$SHARE/fonts/vaani" >/dev/null 2>&1 || true
 gtk-update-icon-cache -q -t "$SHARE/icons/hicolor" >/dev/null 2>&1 || true
 update-desktop-database -q "$SHARE/applications" >/dev/null 2>&1 || true
+
+# Wayland: the paste key goes through /dev/uinput, which needs a udev rule on some distros.
+if [[ ! -w /dev/uinput ]] && [[ ! -e /etc/udev/rules.d/70-vaani-uinput.rules ]]; then
+  say "Allowing Vaani to press keys on Wayland (udev rule for /dev/uinput)"
+  $SUDO install -m644 assets/70-vaani-uinput.rules /etc/udev/rules.d/70-vaani-uinput.rules &&
+    $SUDO udevadm control --reload && $SUDO udevadm trigger --subsystem-match=misc --action=change ||
+    warn "Couldn't add the udev rule; on Wayland, Vaani will leave text on the clipboard instead."
+fi
 
 case ":$PATH:" in
   *":$BIN:"*) ;;

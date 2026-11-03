@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 env:
@@ -26,3 +25,64 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+
+  # Build the release packages the way the release workflow does.
+  packages:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-4-dev clang cmake rpm
+      - uses: Swatinem/rust-cache@v2
+      - name: Package
+        run: ./scripts/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/
+
+  # Install each package on the distributions it is for, and check that it starts.
+  install:
+    needs: packages
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "debian:12", setup: "apt-get update && apt-get install -y ./vaani_*.deb" }
+          - { image: "ubuntu:24.04", setup: "apt-get update && apt-get install -y ./vaani_*.deb" }
+          - { image: "fedora:latest", setup: "dnf install -y ./vaani-*.rpm" }
+          - { image: "opensuse/tumbleweed", setup: "zypper --non-interactive install --allow-unsigned-rpm ./vaani-*.rpm" }
+          - { image: "opensuse/leap:15.6", setup: "zypper --non-interactive install --allow-unsigned-rpm ./vaani-*.rpm" }
+          - { image: "archlinux:latest", setup: "pacman -Syu --noconfirm gtk4 alsa-lib libx11 libxi libxcb libxkbcommon && tar xzf vaani-*.tar.gz && cp -a vaani-*-linux/bin/. /usr/local/bin/" }
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+      - name: Install
+        run: ${{ matrix.setup }}
+      - name: Run
+        run: vaani --version && vaani doctor
+
+  # The from-source install script on distributions with other package managers.
+  install-script:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["fedora:latest", "archlinux:latest", "opensuse/tumbleweed"]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Tools the script expects
+        run: |
+          if command -v dnf; then dnf install -y curl tar gzip findutils
+          elif command -v pacman; then pacman -Syu --noconfirm curl tar gzip
+          else zypper --non-interactive install curl tar gzip; fi
+      - uses: actions/checkout@v4
+      - name: Install from source
+        run: ./scripts/install.sh
+      - name: Run
+        run: ~/.local/bin/vaani --version

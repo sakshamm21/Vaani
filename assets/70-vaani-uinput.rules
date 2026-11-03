@@ -1,0 +1,3 @@
+# Lets the person at the computer use /dev/uinput, which Vaani needs to press the paste key
+# on Wayland. The same rule ships with Steam and other input tools.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
