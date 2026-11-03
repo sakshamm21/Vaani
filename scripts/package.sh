@@ -25,8 +25,7 @@ stage() {
   install -Dm644 assets/$ID.desktop "$root$prefix/share/applications/$ID.desktop"
   install -Dm644 assets/icons/$ID.svg "$root$prefix/share/icons/hicolor/scalable/apps/$ID.svg"
   install -Dm644 assets/icons/$ID-dark.svg "$root$prefix/share/icons/hicolor/scalable/apps/$ID-dark.svg"
-  install -Dm644 LICENSE-MIT "$root$prefix/share/doc/vaani/LICENSE-MIT"
-  install -Dm644 LICENSE-APACHE "$root$prefix/share/doc/vaani/LICENSE-APACHE"
+  install -Dm644 LICENSE "$root$prefix/share/doc/vaani/LICENSE"
   install -Dm644 assets/fonts/OFL-Inter.txt "$root$prefix/share/doc/vaani/OFL-Inter.txt"
 }
 
@@ -39,7 +38,7 @@ cat > "$DEB/DEBIAN/control" <<CONTROL
 Package: vaani
 Version: $VERSION
 Architecture: $ARCH
-Maintainer: Saksham Malhotra <saksham2003malhotra@gmail.com>
+Maintainer: sakshamm21 <saksham2003malhotra@gmail.com>
 Installed-Size: $SIZE
 Depends: libgtk-4-1, libasound2t64 | libasound2, libx11-6, libxi6, libxcb1
 Recommends: gnome-keyring | kwalletmanager

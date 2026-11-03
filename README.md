@@ -9,7 +9,7 @@
   <a href="https://github.com/sakshamm21/vaani/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/sakshamm21/vaani/ci.yml?branch=main&style=flat-square&label=build&color=d6457a" alt="Build status"></a>
   <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11-1d1d1f?style=flat-square" alt="Platform: Linux, X11">
   <img src="https://img.shields.io/badge/made%20with-Rust%20%2B%20GTK%204-1d1d1f?style=flat-square" alt="Made with Rust and GTK 4">
-  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-1d1d1f?style=flat-square" alt="License: MIT or Apache-2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square" alt="License: MIT"></a>
 </p>
 
 <p align="center">
@@ -37,12 +37,14 @@
 
 | | |
 | --- | --- |
-| **Works in every app** | Text goes into whatever has focus. Tested in Firefox, Xed and Nextpad++; browsers, editors, chat apps and terminals all take it the same way. |
+| **Works in every app** | Text goes into whatever has focus. Tested in Firefox, Chrome, LibreOffice Writer, Xed, Nextpad++, GNOME Terminal, Xfce Terminal and Wine Notepad. |
 | **Private by default** | Twelve local speech models through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): Parakeet, Whisper, Moonshine and SenseVoice. No account, no telemetry. |
 | **Fast cloud option** | Bring your own key for Groq, OpenAI or any OpenAI-compatible server. Keys live in your system keyring. |
+| **Never loses a word** | If the model is still loading, Vaani waits for it. If an app ignores the paste, the text is typed instead. If the cloud is unreachable, an installed local model takes over. |
+| **Spoken commands** | Say "new line", "new paragraph", "full stop" or "question mark". Add your own word replacements in the Dictionary. |
 | **Two ways to talk** | Hold the key to talk, or tap once for hands-free and tap again to finish. Esc cancels. |
-| **Light and dark** | A calm, native interface that follows your desktop or your choice, with a pink accent. |
-| **Lightweight** | Native GTK 4 with no browser engine. Idle CPU is effectively zero. |
+| **Light and dark** | Follows your desktop theme, or set it yourself from the title bar. |
+| **Lightweight** | Native GTK 4, no browser engine. The app uses 115 MB of memory and 0% CPU when idle; the default model adds 850 MB. |
 
 <p align="center">
   <img src="assets/readme/pill.png" alt="The recording indicator while listening and while transcribing, in light and dark" width="560">
@@ -92,10 +94,10 @@ your previous clipboard is restored afterwards.
 | | |
 | --- | --- |
 | Display server | X11 (Xorg). Wayland is not supported yet. |
-| Distributions | Linux Mint 21 or later, Ubuntu 22.04 or later, Debian 12, Pop!_OS and other Debian-based systems. Other distributions work if the build dependencies are installed by hand. |
-| Desktop | Any X11 desktop. Tested on Cinnamon; MATE, Xfce, KDE Plasma (X11) and GNOME on Xorg are expected to work. |
-| Memory | About 1 GB free for the default model. Smaller models need 200 to 400 MB. |
-| Disk | About 1 GB for the build, plus 100 MB to 2 GB per model. |
+| Distributions | Linux Mint 21 or later, Ubuntu 22.04 or later, Debian 12, Pop!_OS and other Debian-based systems. On other distributions, build from source. |
+| Desktop | Any X11 desktop with a system tray. Developed and tested on Cinnamon (Linux Mint 22.3). |
+| Memory | 1 GB free with the default model (Parakeet v3). Smaller models use less. With a cloud engine, 115 MB. |
+| Disk | 46 MB for the app, plus 100 MB to 1.9 GB per model. Building from source needs 2 GB more. |
 | Other | A microphone, and an internet connection for the first model download. |
 
 To check your session type, run `echo $XDG_SESSION_TYPE`. It should print `x11`.
@@ -114,15 +116,15 @@ The install script:
    asks for your password.
 2. Installs the Rust toolchain through [rustup](https://rustup.rs) if `cargo` is not found.
    It is installed for your user only.
-3. Builds Vaani in release mode. The first build takes three to ten minutes.
+3. Builds Vaani in release mode. The first build compiles every dependency and takes several minutes; later builds are quick.
 4. Installs `vaani` and `vaani-worker` to `~/.local/bin`, the application icon and menu entry
    to `~/.local/share`, and the interface fonts to `~/.local/share/fonts/vaani`.
 5. Starts Vaani.
 
 Nothing is installed system-wide apart from the build dependencies.
 
-If `~/.local/bin` is not on your `PATH`, the script prints a notice. Most distributions add it
-automatically at your next login. Until then, Vaani can be started from the application menu.
+If `~/.local/bin` is not on your `PATH`, the script prints a notice. Ubuntu, Mint and Debian
+add it at your next login. Until then, start Vaani from the application menu.
 
 ### Manual dependency installation
 
@@ -133,7 +135,7 @@ sudo apt install build-essential pkg-config clang cmake libasound2-dev libgtk-4-
   libx11-dev libxi-dev libxtst-dev libxcb1-dev
 ```
 
-On Fedora (untested):
+On Fedora:
 
 ```sh
 sudo dnf install gcc gcc-c++ pkgconf clang cmake alsa-lib-devel gtk4-devel \
@@ -164,15 +166,29 @@ and does not use `sudo` at runtime.
 | Hold **Right Ctrl**, speak, release | Records while the key is held, then inserts the text. |
 | Tap **Right Ctrl**, speak, tap again | Hands-free: recording continues until the second tap. |
 | **Esc** while recording | Cancels. Nothing is inserted. |
+| Stop talking in hands-free mode | Optionally finishes on its own after 3, 5 or 10 seconds of silence. |
 | Tray icon → **Paste last** | Inserts the most recent dictation again. |
 | Tray icon → **Settings**, or Vaani in the application menu | Opens the settings window. |
 
 While recording, an indicator at the bottom of the screen shows the input level and elapsed
-time. If a cloud engine is active, the indicator says so.
+time. If a cloud engine is active, the indicator says so. Music and videos that support
+media controls (Spotify, browsers, most players) pause while you speak and resume afterwards.
+
+### Spoken commands
+
+| Say | Writes |
+| --- | --- |
+| "new line" / "next line" | A line break |
+| "new paragraph" / "next paragraph" | A blank line |
+| "full stop", "comma", "question mark", "exclamation mark", "colon", "semicolon" | The punctuation mark |
+
+Commands can be turned off under **Dictionary**. The same page holds your replacements: say
+"my email" and have Vaani write the address, or fix a name the model keeps misspelling.
 
 Text is inserted by placing it on the clipboard and sending a paste shortcut to the focused
 window (Ctrl+V, or Ctrl+Shift+V in terminals). Your previous clipboard contents are restored
-afterwards. Each dictation is also saved to History before it is inserted, so text is not lost if an
+afterwards. If the application does not take the paste, Vaani types the text key by key
+instead, which also works in older and Wine applications. Each dictation is also saved to History before it is inserted, so text is not lost if an
 application does not accept the paste. History keeps the last 20 dictations by default; this
 can be changed, or turned off, under **General → History**.
 
@@ -214,11 +230,16 @@ immediately.
 | Floating pill | The on-screen recording indicator. |
 | Remove filler words | Removes "um", "uh" and similar words. |
 | Add a space after each dictation | Separates consecutive dictations. |
+| Finish hands-free on silence | Never (default), or after 3, 5 or 10 seconds without speech. |
+| Pause music while dictating | Pauses media players while recording and resumes them afterwards. On by default. |
 | Start Vaani when I log in | Adds or removes the autostart entry. |
 | History | How many dictations to keep: none, the last 20 (default), 100 or 1,000, or all. Older entries are deleted automatically. |
 
 **Speech Model** chooses between local and cloud recognition, sets the language, and manages
-downloaded models.
+downloaded models. **Keep everything on this computer** turns cloud recognition off
+entirely, so audio never leaves the machine.
+
+**Dictionary** turns spoken commands on or off and manages word replacements.
 
 **Cloud** configures the provider, API key, model and endpoint for cloud recognition.
 
@@ -234,7 +255,7 @@ Vaani applies changes when the file is saved.
 
 | Model | Download | Languages | Notes |
 | --- | --- | --- | --- |
-| Parakeet TDT 0.6B v3 | 465 MB | English and 24 European languages | Default. Best accuracy and speed on most CPUs. |
+| Parakeet TDT 0.6B v3 | 465 MB | English and 24 European languages | Default. |
 | Parakeet TDT 0.6B v2 | 460 MB | English | |
 | Moonshine Tiny | 103 MB | English | Fastest. For older or low-memory machines. |
 | Moonshine Base | 240 MB | English | |
@@ -252,8 +273,7 @@ them. They can also be managed with `vaani models`. Models are stored in
 `~/.local/share/vaani/models`.
 
 The active model stays loaded in a separate `vaani-worker` process so that transcription
-starts immediately. The worker uses about 800 MB with Parakeet, and much less with the
-smaller models. If the worker crashes, Vaani restarts it.
+starts immediately. The worker uses 850 MB with Parakeet v3; smaller models use less. If the worker crashes, Vaani restarts it.
 
 For Whisper and the cloud engines, set the spoken language under **Speech Model → Language**,
 or leave it on automatic detection. Parakeet detects its supported languages automatically.
@@ -321,9 +341,9 @@ Check that Vaani is running (`vaani status`) and that you are on an X11 session
 key under **General → Dictation key**.
 
 **The text is not inserted into one application.**
-The text is still on the clipboard and in History, so you can paste it with Ctrl+V. Please
-open an issue naming the application. Applications running under Wine, and some terminal
-emulators, can behave differently.
+Vaani pastes first and types the text key by key if the application does not take the paste.
+If neither works, the text stays on the clipboard and in History; press Ctrl+V. Open an issue
+with the application's name and the output of `vaani doctor`.
 
 **The transcription is poor or empty.**
 Make sure the right microphone is selected under **General → Input device**. If the level
@@ -332,20 +352,20 @@ volume in the sound settings, since clipping reduces accuracy. For languages oth
 English, try a Whisper model and set the language explicitly.
 
 **The first dictation is slow.**
-The model loads when Vaani starts, which takes a few seconds (the Overview page shows
-*Loading model*). A dictation made before loading finishes is not transcribed, and a
-notification says so. Wait until the status shows *Ready*.
+The model loads when Vaani starts: 3 to 6 seconds for Parakeet on a four-core CPU, longer from
+a hard disk. A dictation made during loading is kept, and the pill shows *Loading model* until
+it can be transcribed.
 
 **The tray icon is missing.**
-Your desktop needs a StatusNotifierItem host. Cinnamon, KDE Plasma, MATE and Xfce include one.
-On GNOME, install the AppIndicator extension. Vaani works without the tray icon; use the
-application menu or `vaani settings` instead.
+Your desktop needs a StatusNotifierItem host. Cinnamon, KDE Plasma, MATE and Xfce include one;
+GNOME needs the AppIndicator extension. Without a tray, open Vaani from the application menu or
+with `vaani settings`.
 
 **`vaani: command not found`.**
 `~/.local/bin` is not on your `PATH` yet. Log out and back in, or run `~/.local/bin/vaani`.
 
 **`vaani doctor` prints ALSA or JACK messages.**
-These come from the audio library while it lists devices. They can be ignored.
+The audio library prints them while it lists devices. They are harmless.
 
 For more detail, start Vaani with debug logging and reproduce the problem:
 
@@ -400,8 +420,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Pull requests are welcome. For larger changes, please open an issue first to discuss the
-approach.
+Pull requests are welcome. For larger changes, open an issue first.
 
 ## Project layout
 
@@ -421,7 +440,7 @@ crates/
   vaani-platform   Session and desktop detection
 models/            Model catalogue (registry.toml)
 assets/            Icons, desktop entry, fonts and README images
-scripts/           Install script
+scripts/           Install and packaging scripts
 ```
 
 Vaani runs as a single background process that owns the shortcut, microphone, clipboard and
@@ -434,10 +453,9 @@ instance over D-Bus (`io.github.sakshamm21.Vaani`).
 - Wayland support (GNOME, KDE Plasma, Hyprland, Sway).
 - Optional AI clean-up of punctuation and formatting, with local or cloud language models.
 - More cloud providers.
-- Packages: `.deb`, Flatpak and AppImage.
+- Flatpak and AppImage packages.
 
 ## License
 
-Vaani is licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your
-option. The bundled Inter font is licensed under the SIL Open Font License 1.1; see
-`assets/fonts/OFL-Inter.txt`.
+Vaani is released under the [MIT License](LICENSE). The bundled Inter font is under the SIL
+Open Font License 1.1 ([assets/fonts/OFL-Inter.txt](assets/fonts/OFL-Inter.txt)).

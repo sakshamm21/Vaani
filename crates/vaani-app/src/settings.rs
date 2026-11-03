@@ -1524,7 +1524,7 @@ fn build_about(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             "Plain text; edits apply as soon as you save.",
             &cfgdir,
         ),
-        row("Source code", "MIT or Apache-2.0.", &gh),
+        row("Source code", "MIT License.", &gh),
     ]));
     let _ = glib::MainContext::default();
     sw
