@@ -1,4 +1,6 @@
-//! Where Vaani keeps its files, following the XDG base directory spec.
+//! Where Vaani keeps its files: the XDG base directories on Linux, and on Windows
+//! `%APPDATA%` for settings and `%LOCALAPPDATA%` for models, history and logs (they are
+//! large or machine-specific, so they must not roam with the profile).
 
 use std::path::PathBuf;
 
@@ -16,7 +18,11 @@ pub fn config_file() -> Option<PathBuf> {
 
 /// `~/.local/share/vaani`: history database, downloaded models.
 pub fn data_dir() -> Option<PathBuf> {
-    dirs().map(|d| d.data_dir().to_path_buf())
+    if cfg!(windows) {
+        dirs().map(|d| d.data_local_dir().to_path_buf())
+    } else {
+        dirs().map(|d| d.data_dir().to_path_buf())
+    }
 }
 
 /// `~/.local/state/vaani/logs`.

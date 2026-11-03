@@ -182,9 +182,12 @@ fn fetch_to(
     part: &Path,
     progress: Progress<'_>,
 ) -> Result<(), ModelError> {
+    // Not append mode: Windows can't truncate a file opened for appending, which a restart
+    // below needs. Writes go to the cursor, which starts at the end.
     let mut file = fs::OpenOptions::new()
         .create(true)
-        .append(true)
+        .truncate(false)
+        .write(true)
         .read(true)
         .open(part)?;
     let have = file.seek(io::SeekFrom::End(0))?;
@@ -204,6 +207,7 @@ fn fetch_to(
     } else {
         // The server ignored the range: start over.
         file.set_len(0)?;
+        file.seek(io::SeekFrom::Start(0))?;
         0
     };
     let total = resp.content_length().map(|n| n + start);

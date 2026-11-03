@@ -11,7 +11,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
+  linux:
     # The oldest supported Ubuntu, so the binaries also run on Mint 21 and Debian 12.
     runs-on: ubuntu-22.04
     steps:
@@ -28,9 +28,62 @@ jobs:
         run: cargo test --workspace --locked
       - name: Package
         run: ./scripts/package.sh
-      - name: Publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/PKGBUILD
+            dist/vaani-bin.install
+            dist/SHA256SUMS
+
+  windows:
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: GTK
+        uses: ./.github/actions/gtk-windows
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          python -m pip install --quiet pefile
+          ./scripts/package-windows.ps1
+      # The same end-to-end check as CI, on the exact installer that is published.
+      - name: Install, dictate into Notepad, uninstall
+        shell: powershell
+        run: |
+          $setup = (Get-ChildItem dist\vaani-*-setup.exe).FullName
+          ./scripts/windows-smoke-test.ps1 -Setup $setup -Shots screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS-windows
+
+  # One draft release, created only once every file is built and tested.
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/*.rpm dist/*.tar.gz dist/PKGBUILD dist/vaani-bin.install dist/SHA256SUMS \
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* \
             --title "Vaani ${GITHUB_REF_NAME#v}" --generate-notes --draft

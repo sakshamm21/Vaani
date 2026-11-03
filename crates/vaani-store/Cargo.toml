@@ -10,10 +10,15 @@ authors.workspace = true
 
 [dependencies]
 rusqlite.workspace = true
-oo7.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+oo7.workspace = true
+tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+keyring.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,8 +1,11 @@
 //! Work out the display server, desktop and available input paths.
 
 use std::collections::HashMap;
+#[cfg(not(windows))]
 use std::env;
-use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
+use std::path::Path;
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -13,6 +16,8 @@ pub enum SessionType {
     Wayland,
     /// A text console or SSH session with no display.
     Tty,
+    /// A Windows desktop session.
+    Windows,
     Unknown,
 }
 
@@ -29,6 +34,8 @@ pub enum Desktop {
     Cosmic,
     /// Sway, Hyprland, river, Wayfire, labwc and other wlroots-style compositors.
     Wlroots,
+    /// The Windows shell (Explorer).
+    Windows,
     Other,
 }
 
@@ -52,9 +59,28 @@ pub struct SessionInfo {
 }
 
 /// Programs that later backends or fallbacks may use. Reported, never required.
+#[cfg(not(windows))]
 const TOOLS: &[&str] = &["ibus", "wl-copy", "xdotool", "wtype", "ydotool"];
 
 /// Probe the real environment.
+#[cfg(windows)]
+pub fn probe() -> SessionInfo {
+    SessionInfo {
+        session_type: SessionType::Windows,
+        desktop: Desktop::Windows,
+        desktop_raw: None,
+        x11_display: None,
+        wayland_display: None,
+        xwayland: false,
+        dbus_session_bus: false,
+        uinput_writable: false,
+        evdev_readable: false,
+        tools: Vec::new(),
+    }
+}
+
+/// Probe the real environment.
+#[cfg(not(windows))]
 pub fn probe() -> SessionInfo {
     let vars: HashMap<String, String> = env::vars().collect();
     let path = vars.get("PATH").cloned().unwrap_or_default();
@@ -140,6 +166,7 @@ fn classify_desktop(raw: &str) -> Desktop {
     Desktop::Other
 }
 
+#[cfg(not(windows))]
 fn any_evdev_readable(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
@@ -150,6 +177,7 @@ fn any_evdev_readable(dir: &Path) -> bool {
     })
 }
 
+#[cfg(not(windows))]
 fn on_path(name: &str, path: &str) -> bool {
     path.split(':')
         .filter(|d| !d.is_empty())

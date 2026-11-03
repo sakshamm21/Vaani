@@ -1,0 +1,42 @@
+name: GTK for Windows
+description: >
+  Download the gvsbuild GTK 4 bundle (MSVC) to C:\gtk-build\gtk\x64\release, the prefix its
+  pkg-config files name, and point the Rust build at it.
+runs:
+  using: composite
+  steps:
+    - name: Find the latest gvsbuild release
+      id: rel
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: echo "tag=$(gh release view --repo wingtk/gvsbuild --json tagName -q .tagName)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v4
+      id: cache
+      with:
+        path: C:\gtk-build\gtk\x64\release
+        key: gvsbuild-gtk4-${{ steps.rel.outputs.tag }}
+    - name: Download
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release download "${{ steps.rel.outputs.tag }}" --repo wingtk/gvsbuild --pattern 'GTK4_Gvsbuild_*_x64.zip' --dir "$RUNNER_TEMP/gtk"
+        mkdir -p /c/gtk-build/gtk/x64/release
+        unzip -q "$RUNNER_TEMP"/gtk/*.zip -d /c/gtk-build/gtk/x64/release
+        rm -rf "$RUNNER_TEMP/gtk" /c/gtk-build/gtk/x64/release/{python,wheels,include/absl,share/doc/protobuf}
+    - name: Environment
+      shell: bash
+      run: |
+        GTK='C:\gtk-build\gtk\x64\release'
+        echo "C:/gtk-build/gtk/x64/release/bin" >> "$GITHUB_PATH"
+        echo "PKG_CONFIG_PATH=$GTK\\lib\\pkgconfig" >> "$GITHUB_ENV"
+        echo "LIB=$GTK\\lib;$LIB" >> "$GITHUB_ENV"
+        echo "GTK_DIR=$GTK" >> "$GITHUB_ENV"
+        ls /c/gtk-build/gtk/x64/release/bin | grep -i pkg || true
+        if [ -f /c/gtk-build/gtk/x64/release/bin/pkgconf.exe ]; then
+          echo "PKG_CONFIG=$GTK\\bin\\pkgconf.exe" >> "$GITHUB_ENV"
+        elif [ -f /c/gtk-build/gtk/x64/release/bin/pkg-config.exe ]; then
+          echo "PKG_CONFIG=$GTK\\bin\\pkg-config.exe" >> "$GITHUB_ENV"
+        fi

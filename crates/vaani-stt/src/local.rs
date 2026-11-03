@@ -37,7 +37,10 @@ pub struct LocalEngine {
 pub fn worker_path() -> PathBuf {
     std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("vaani-worker")))
+        .and_then(|p| {
+            p.parent()
+                .map(|d| d.join(format!("vaani-worker{}", std::env::consts::EXE_SUFFIX)))
+        })
         .filter(|p| p.is_file())
         .unwrap_or_else(|| PathBuf::from("vaani-worker"))
 }
@@ -66,7 +69,14 @@ impl LocalEngine {
             .ok_or_else(|| {
                 SttError::NotReady(format!("model {} is not downloaded", self.model.id))
             })?;
-        let mut child = Command::new(&self.worker_path)
+        let mut cmd = Command::new(&self.worker_path);
+        #[cfg(windows)]
+        {
+            // No console window for the worker.
+            use std::os::windows::process::CommandExt as _;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = cmd
             .arg("--serve")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

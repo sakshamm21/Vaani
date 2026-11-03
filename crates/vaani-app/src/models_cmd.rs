@@ -83,7 +83,7 @@ pub fn download(id: &str, use_it: bool) -> Result<ExitCode> {
         c.engine.local_model = model.id.clone();
         c.save(&path)?;
         println!("Vaani will now use {}.", model.name);
-        let _ = crate::dbus::try_call(crate::dbus::Call::ReloadEngine);
+        let _ = crate::ipc::try_call(crate::ipc::Call::ReloadEngine);
     }
     Ok(ExitCode::SUCCESS)
 }

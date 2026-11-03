@@ -48,7 +48,7 @@ Recommends: gnome-keyring | kwalletmanager
 Section: utils
 Priority: optional
 Homepage: https://github.com/sakshamm21/vaani
-Description: Voice dictation for Linux
+Description: Voice dictation: hold a key, speak, and your words appear in any app
  Hold a key, speak, and your words are typed into any app. Speech recognition
  runs on your computer by default (Parakeet, Whisper, Moonshine, SenseVoice),
  with optional cloud transcription through your own API key. Works on X11 and
@@ -81,7 +81,7 @@ if command -v rpmbuild >/dev/null; then
 Name: vaani
 Version: $VERSION
 Release: 1
-Summary: Voice dictation for Linux
+Summary: Voice dictation: hold a key, speak, and your words appear in any app
 License: MIT
 URL: https://github.com/sakshamm21/vaani
 Recommends: gnome-keyring
@@ -158,7 +158,7 @@ cat > "$DIST/PKGBUILD" <<PKGBUILD
 pkgname=vaani-bin
 pkgver=$VERSION
 pkgrel=1
-pkgdesc="Voice dictation for Linux: hold a key, speak, and your words are typed into any app"
+pkgdesc="Voice dictation: hold a key, speak, and your words are typed into any app"
 arch=('x86_64')
 url="https://github.com/sakshamm21/vaani"
 license=('MIT')

@@ -66,6 +66,7 @@ fn components(session: &SessionInfo) -> Vec<Component> {
     v.push(component(
         "hotkey",
         match vaani_hotkey::backend() {
+            vaani_hotkey::Backend::Hook => Ok(format!("keyboard hook, key {key}")),
             vaani_hotkey::Backend::X11 if session.x11_display.is_some() => {
                 Ok(format!("X11 XInput2, key {key}"))
             }
@@ -114,6 +115,9 @@ fn components(session: &SessionInfo) -> Vec<Component> {
     v.push(component(
         "text insertion",
         match (session.session_type, session.x11_display.is_some()) {
+            (SessionType::Windows, _) => {
+                Ok("clipboard paste via SendInput, typing as fallback".into())
+            }
             (SessionType::Wayland, _)
                 if vaani_inject::wayland_clipboard() && vaani_inject::uinput_usable() =>
             {
@@ -213,6 +217,29 @@ fn collect_base() -> Report {
     }
 }
 
+#[cfg(windows)]
+fn os_release() -> String {
+    // e.g. "Windows 11 Pro 24H2 (build 26100)". ProductName still says "Windows 10" on
+    // Windows 11, so the build number decides (11 starts at 22000).
+    let Ok(k) =
+        windows_registry::LOCAL_MACHINE.open(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+    else {
+        return "Windows".into();
+    };
+    let product = k
+        .get_string("ProductName")
+        .unwrap_or_else(|_| "Windows".into());
+    let build = k.get_string("CurrentBuild").unwrap_or_default();
+    let display = k.get_string("DisplayVersion").unwrap_or_default();
+    let product = if build.parse::<u32>().is_ok_and(|b| b >= 22000) {
+        product.replace("Windows 10", "Windows 11")
+    } else {
+        product
+    };
+    format!("{product} {display} (build {build})").replace("  ", " ")
+}
+
+#[cfg(not(windows))]
 fn os_release() -> String {
     std::fs::read_to_string("/etc/os-release")
         .ok()
@@ -224,16 +251,22 @@ fn os_release() -> String {
         .unwrap_or_else(|| std::env::consts::OS.to_string())
 }
 
+const WORKER: &str = if cfg!(windows) {
+    "vaani-worker.exe"
+} else {
+    "vaani-worker"
+};
+
 /// Look for `vaani-worker` next to this binary, then on PATH.
 fn worker_check() -> Check {
     let beside = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("vaani-worker")))
+        .and_then(|p| p.parent().map(|d| d.join(WORKER)))
         .filter(|p| p.is_file());
     let found = beside.or_else(|| {
-        std::env::var("PATH").ok().and_then(|path| {
-            path.split(':')
-                .map(|d| std::path::Path::new(d).join("vaani-worker"))
+        std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|d| d.join(WORKER))
                 .find(|p| p.is_file())
         })
     });
@@ -250,18 +283,7 @@ fn worker_check() -> Check {
 }
 
 fn running() -> bool {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
-        return false;
-    };
-    rt.block_on(async {
-        match zbus::Connection::session().await {
-            Ok(conn) => crate::dbus::is_running(&conn).await,
-            Err(_) => false,
-        }
-    })
+    crate::ipc::running()
 }
 
 fn yes(b: bool) -> &'static str {
@@ -279,9 +301,14 @@ fn print_text(r: &Report) {
         SessionType::Wayland if s.xwayland => "Wayland (XWayland available)",
         SessionType::Wayland => "Wayland",
         SessionType::Tty => "text console (no display)",
+        SessionType::Windows => "Windows desktop",
         SessionType::Unknown => "unknown",
     };
     println!("  Session:         {session}");
+    if s.session_type == SessionType::Windows {
+        print_vaani(r);
+        return;
+    }
     println!(
         "  Desktop:         {:?} ({})",
         s.desktop,
@@ -312,6 +339,10 @@ fn print_text(r: &Report) {
         .map(|(n, found)| format!("{n} {}", if *found { "found" } else { "missing" }))
         .collect();
     println!("  Helper tools:    {}", tools.join(", "));
+    print_vaani(r);
+}
+
+fn print_vaani(r: &Report) {
     println!();
     println!("Vaani");
     println!("  Running:         {}", yes(r.running));

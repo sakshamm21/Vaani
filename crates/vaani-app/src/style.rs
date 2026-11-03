@@ -114,7 +114,7 @@ window.vaani-overlay { background: transparent; }
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
 }
 .vaani-pill label {
-  font-family: "Inter", "Noto Sans", sans-serif;
+  font-family: "Inter", "Noto Sans", "Segoe UI", sans-serif;
   color: @v_fg; font-weight: 600; font-size: 13px; font-feature-settings: "tnum";
 }
 .vaani-pill label.dim { color: @v_muted; font-weight: 500; font-size: 12px; }
@@ -126,13 +126,13 @@ window.vaani-overlay { background: transparent; }
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
 }
 .vaani-caption label {
-  font-family: "Inter", "Noto Sans", sans-serif;
+  font-family: "Inter", "Noto Sans", "Segoe UI", sans-serif;
   color: @v_fg; font-weight: 500; font-size: 13px;
 }
 
 /* ---------- settings window ---------- */
 window.vaani-settings, window.vaani-settings * {
-  font-family: "Inter", "Noto Sans", "Ubuntu", sans-serif;
+  font-family: "Inter", "Noto Sans", "Ubuntu", "Segoe UI", sans-serif;
 }
 window.vaani-settings { background-color: @v_bg; color: @v_fg; font-size: 14px; }
 window.vaani-settings headerbar {
@@ -214,7 +214,7 @@ window.vaani-settings .badge {
 window.vaani-settings .badge.accent { background-color: alpha(@v_warn, 0.16); color: @v_warn; }
 window.vaani-settings .badge.star { background-color: alpha(@v_accent, 0.14); color: @v_accent_strong; }
 window.vaani-settings .keycap {
-  font-family: "JetBrains Mono", "Ubuntu Mono", "DejaVu Sans Mono", monospace;
+  font-family: "JetBrains Mono", "Ubuntu Mono", "DejaVu Sans Mono", "Cascadia Mono", "Consolas", monospace;
   font-weight: 600; font-size: 12.5px;
   padding: 4px 10px; border-radius: 6px; color: @v_fg; background-color: @v_surface2;
   border: 1px solid @v_border2; border-bottom-width: 2px;
@@ -329,9 +329,35 @@ window.vaani-settings selection, window.vaani-settings text selection {
 
 const INTER: &[u8] = include_bytes!("../../../assets/fonts/Inter.ttf");
 
+#[cfg(not(windows))]
 fn font_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/fonts/vaani"))
 }
+
+/// Windows: kept with Vaani's other files and loaded into GTK's font map at start (see
+/// [`load_fonts`]), so nothing is installed system-wide.
+#[cfg(windows)]
+fn font_dir() -> Option<PathBuf> {
+    vaani_core::paths::data_dir().map(|d| d.join("fonts"))
+}
+
+/// Make our fonts available to GTK on Windows. Call after GTK has started.
+#[cfg(windows)]
+pub fn load_fonts() {
+    use gtk4::prelude::*;
+    let Some(p) = font_dir().map(|d| d.join("Inter.ttf")) else {
+        return;
+    };
+    let map = gtk4::Label::new(None).pango_context().font_map();
+    if let Some(map) = map {
+        if let Err(e) = map.add_font_file(&p) {
+            tracing::warn!("could not load Inter: {e}");
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn load_fonts() {}
 
 /// Put our fonts where fontconfig finds them. Returns true if they were newly written
 /// (fontconfig picks them up on its next rescan, at the latest on the next start).
@@ -356,7 +382,7 @@ pub fn ensure_fonts() -> bool {
             wrote = true;
         }
     }
-    if wrote {
+    if wrote && cfg!(not(windows)) {
         let _ = std::process::Command::new("fc-cache")
             .arg("-f")
             .arg(&dir)
@@ -383,8 +409,22 @@ fn desktop_is_dark() -> bool {
         let prefer = gtk4::Settings::default()
             .map(|s| s.is_gtk_application_prefer_dark_theme())
             .unwrap_or(false);
-        prefer || format!("{env} {name}").to_lowercase().contains("dark")
+        prefer || format!("{env} {name}").to_lowercase().contains("dark") || windows_dark()
     })
+}
+
+/// Windows: Settings > Personalisation > Colours > "Choose your app mode".
+#[cfg(windows)]
+fn windows_dark() -> bool {
+    windows_registry::CURRENT_USER
+        .open(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|k| k.get_u32("AppsUseLightTheme"))
+        .is_ok_and(|v| v == 0)
+}
+
+#[cfg(not(windows))]
+fn windows_dark() -> bool {
+    false
 }
 
 /// Load the stylesheet for `theme`. Cheap to call; does nothing if already applied.

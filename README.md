@@ -1,13 +1,13 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/banner-dark.png">
-    <img src="assets/readme/banner-light.png" alt="Vaani: voice dictation for Linux" width="880">
+    <img src="assets/readme/banner-light.png" alt="Vaani: voice dictation" width="880">
   </picture>
 </p>
 
 <p align="center">
   <a href="https://github.com/sakshamm21/vaani/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/sakshamm21/vaani/ci.yml?branch=main&style=flat-square&label=build&color=d6457a" alt="Build status"></a>
-  <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11%20%C2%B7%20Wayland-1d1d1f?style=flat-square" alt="Platform: Linux, X11 and Wayland">
+  <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20Windows-1d1d1f?style=flat-square" alt="Platform: Linux and Windows">
   <img src="https://img.shields.io/badge/made%20with-Rust%20%2B%20GTK%204-1d1d1f?style=flat-square" alt="Made with Rust and GTK 4">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square" alt="License: MIT"></a>
 </p>
@@ -16,6 +16,12 @@
   <b>Hold a key, speak, let go.</b> Your words are typed into whatever app you're using:<br>
   a browser, an editor, a chat window or a terminal. Speech recognition runs on your own<br>
   computer by default, so your voice never leaves it.
+</p>
+
+<p align="center">
+  <a href="https://github.com/sakshamm21/Vaani/releases/latest"><img src="https://img.shields.io/badge/Download%20for-Linux-d6457a?style=for-the-badge" alt="Download for Linux"></a>
+  &nbsp;
+  <a href="https://github.com/sakshamm21/Vaani/releases/latest"><img src="https://img.shields.io/badge/Download%20for-Windows-d6457a?style=for-the-badge" alt="Download for Windows"></a>
 </p>
 
 <p align="center">
@@ -44,7 +50,8 @@
 - **Live preview.** The words appear above the recording pill while you speak.
 - **Text tools.** Filler-word removal, spoken punctuation, replacements, snippets, optional
   AI clean-up, command mode for rewriting a selection, and per-app rules.
-- **X11 and Wayland.** GNOME, KDE Plasma, Hyprland, sway, Cinnamon and other desktops.
+- **Linux and Windows.** X11 and Wayland (GNOME, KDE Plasma, Hyprland, sway, Cinnamon and
+  others), and Windows 10 and 11.
 - **Native and light.** Rust and GTK 4. About 115 MB of memory and no CPU when idle; the
   default model adds about 850 MB.
 
@@ -76,21 +83,37 @@
 
 | | |
 | --- | --- |
-| System | Linux on x86-64, with X11 or Wayland |
-| Packages for | Debian 12, Ubuntu 22.04+, Linux Mint 21+, Pop!_OS, Fedora, openSUSE Tumbleweed and Leap 15.6, Arch |
+| System | Linux on x86-64 with X11 or Wayland, or Windows 10 (1809 or later) or 11 on x64 |
+| Linux packages for | Debian 12, Ubuntu 22.04+, Linux Mint 21+, Pop!_OS, Fedora, openSUSE Tumbleweed and Leap 15.6, Arch |
 | Memory | About 1 GB free with the default model; 115 MB with a cloud engine |
-| Disk | 46 MB for the app, plus 100 MB to 1.9 GB per model |
+| Disk | 46 MB for the app on Linux, about 150 MB on Windows, plus 100 MB to 1.9 GB per model |
 | Other | A microphone; internet for the first model download |
 
-### Release packages
+### Windows
+
+Download `vaani-0.5.0-windows-x64-setup.exe` from the
+[latest release](https://github.com/sakshamm21/Vaani/releases/latest) and run it. It installs
+for your user only, so it needs no administrator rights, and adds Vaani to the Start menu.
+
+The installer is not code-signed yet, so Windows SmartScreen may say it "protected your PC".
+Click **More info**, then **Run anyway**. `SHA256SUMS-windows` lists the checksum of each file.
+
+Then start **Vaani** from the Start menu and hold **Right Ctrl**. To uninstall, use
+**Settings → Apps → Installed apps → Vaani**; it asks whether to keep your settings, history
+and models.
+
+For a portable copy, unpack `vaani-0.5.0-windows-x64-portable.zip` anywhere and run
+`bin\vaani.exe`.
+
+### Linux packages
 
 Download the package for your distribution from the
 [latest release](https://github.com/sakshamm21/Vaani/releases/latest) and install it:
 
 ```sh
-sudo apt install ./vaani_0.4.0_amd64.deb                                 # Debian, Ubuntu, Mint, Pop!_OS
-sudo dnf install ./vaani-0.4.0-1.x86_64.rpm                              # Fedora
-sudo zypper install --allow-unsigned-rpm ./vaani-0.4.0-1.x86_64.rpm      # openSUSE
+sudo apt install ./vaani_0.5.0_amd64.deb                                 # Debian, Ubuntu, Mint, Pop!_OS
+sudo dnf install ./vaani-0.5.0-1.x86_64.rpm                              # Fedora
+sudo zypper install --allow-unsigned-rpm ./vaani-0.5.0-1.x86_64.rpm      # openSUSE
 ```
 
 On Arch, build the `vaani-bin` package from the release's `PKGBUILD`:
@@ -108,11 +131,11 @@ The packages set everything up, Wayland included: nothing to add to a group, no 
 setting to change, no need to log out or restart. On GNOME and KDE Plasma the desktop asks
 once to confirm Vaani's shortcut.
 
-Other distributions can use `vaani-0.4.0-x86_64-linux.tar.gz`: unpack it and run
+Other distributions can use `vaani-0.5.0-x86_64-linux.tar.gz`: unpack it and run
 `./install.sh` to install under `~/.local` (it needs GTK 4 and ALSA). `SHA256SUMS` lists the
 checksum of every file.
 
-### From source
+### From source (Linux)
 
 ```sh
 git clone https://github.com/sakshamm21/Vaani.git
@@ -147,13 +170,14 @@ inserted, so nothing is lost if an app refuses the text.
 
 Vaani is a Cargo workspace of small crates. One background process (`vaani run`) owns the
 shortcut, microphone, clipboard and user interface; speech recognition runs in a supervised
-child process; the command line and other tools talk to the running instance over D-Bus.
+child process; the command line and other tools talk to the running instance over D-Bus on
+Linux and a named pipe on Windows.
 
 ```mermaid
 flowchart LR
     subgraph app["vaani (background process)"]
         direction TB
-        HK["vaani-hotkey<br/>XInput2, evdev, portal"] --> CT["controller<br/>state machine"]
+        HK["vaani-hotkey<br/>XInput2, evdev, portal,<br/>Windows keyboard hook"] --> CT["controller<br/>state machine"]
         AU["vaani-audio<br/>capture, 16 kHz"] --> CT
         CT --> TX["vaani-text<br/>clean-up rules"]
         TX --> LM["vaani-llm<br/>optional AI clean-up"]
@@ -163,7 +187,7 @@ flowchart LR
     end
     CT <-->|"postcard frames<br/>stdin/stdout"| WK["vaani-worker<br/>sherpa-onnx model"]
     CT -->|HTTPS| CL["Cloud API<br/>(your key)"]
-    CLI["vaani CLI"] -->|D-Bus| CT
+    CLI["vaani CLI"] -->|"D-Bus or named pipe"| CT
     IN --> APP["Focused app"]
     classDef accent fill:#d6457a,stroke:#d6457a,color:#fff
     class CT,WK accent
@@ -209,7 +233,9 @@ sequenceDiagram
   preview so the cloud result is never delayed.
 - **Insertion.** Vaani puts the text on the clipboard, presses the app's paste key, watches for
   the app to read it, then restores your clipboard. If the app ignores the paste, the text is
-  typed key by key. Terminals get Ctrl+Shift+V; unknown apps get Shift+Insert.
+  typed key by key. Terminals get Ctrl+Shift+V; unknown apps get Shift+Insert. On Windows the
+  clipboard is offered with delayed rendering, so Vaani knows the moment the app reads it, and
+  the text is kept out of clipboard history.
 - **Fallbacks.** A dictation made while the model loads waits for it; a failed cloud request
   falls back to an installed local model; anything that can't be inserted stays on the
   clipboard and in History.
@@ -220,15 +246,15 @@ sequenceDiagram
 
 | Crate | Role |
 | --- | --- |
-| `vaani-app` | The `vaani` binary: controller, GTK 4 pill and settings, tray (StatusNotifierItem), D-Bus service, CLI |
+| `vaani-app` | The `vaani` binary: controller, GTK 4 pill and settings, tray (StatusNotifierItem or notification area), D-Bus or named-pipe service, CLI |
 | `vaani-worker` | Speech recognition process (sherpa-onnx) |
 | `vaani-stt` | Engine interface, worker client and protocol, cloud providers |
 | `vaani-audio` | Microphone capture (cpal), resampling to 16 kHz (rubato), sound cues |
-| `vaani-hotkey` | Global shortcut: X11 XInput2, evdev, GlobalShortcuts portal, Hyprland binding |
-| `vaani-inject` | Text insertion: X11 selections and XTest; Wayland data-control and uinput |
+| `vaani-hotkey` | Global shortcut: X11 XInput2, evdev, GlobalShortcuts portal, Hyprland binding, Windows low-level keyboard hook |
+| `vaani-inject` | Text insertion: X11 selections and XTest; Wayland data-control and uinput; Windows clipboard and SendInput |
 | `vaani-text` | Rule-based clean-up, spoken commands, replacements, snippets, Hindi transliteration |
 | `vaani-llm` | Optional AI clean-up and command mode, with output guardrails |
-| `vaani-store` | History (SQLite) and API keys (Secret Service) |
+| `vaani-store` | History (SQLite) and API keys (Secret Service or Windows Credential Manager) |
 | `vaani-models` | Model catalogue (`models/registry.toml`), downloads and checksums |
 | `vaani-core` | Configuration schema and migration, state machine, paths |
 | `vaani-platform` | Session, desktop and capability detection |
@@ -242,6 +268,10 @@ sequenceDiagram
 | **KDE Plasma 6** | GlobalShortcuts portal, Ctrl+Alt+Space by default | ext data-control clipboard, `/dev/uinput` paste key | Through XWayland |
 | **Hyprland** | Portal shortcut bound by Vaani through Hyprland's socket; Right Ctrl by default | wlr data-control clipboard, `/dev/uinput` paste key | Through XWayland |
 | **sway** | `input` group (evdev) or `bindsym … exec vaani toggle` | wlr data-control clipboard, `/dev/uinput` paste key | Through XWayland |
+| **Windows 10 and 11** | Low-level keyboard hook; any supported key | Delayed-render clipboard and `SendInput` paste key | Topmost tool window that never takes focus |
+
+On Windows nothing needs setting up. An app running as administrator can't receive keys from
+a normal app, so to dictate into one, run Vaani as administrator too.
 
 On every Wayland desktop, joining the `input` group (`sudo usermod -aG input $USER`, then log
 in again) lets Vaani read the keyboard directly, so any key works, including a lone Right Ctrl.
@@ -293,8 +323,8 @@ model is a data change.
 | OpenAI-compatible | set by you | Any `/v1/audio/transcriptions` server, such as a local faster-whisper |
 
 Add a key on the **Cloud** page. Keys are stored through the Secret Service API (GNOME Keyring,
-KWallet) and never written to the config file. **Keep everything on this computer** turns
-cloud recognition off entirely.
+KWallet) on Linux and in Windows Credential Manager, and never written to the config file.
+**Keep everything on this computer** turns cloud recognition off entirely.
 
 ## Text processing
 
@@ -396,6 +426,10 @@ whether from the settings window or a text editor.
 | `~/.local/state/vaani/logs/` | Logs, kept for seven days; no transcript text at the default level |
 | `~/.config/autostart/io.github.sakshamm21.Vaani.desktop` | Autostart entry |
 
+On Windows, settings are in `%APPDATA%\sakshamm21\vaani\config\`; models, history and logs
+in `%LOCALAPPDATA%\sakshamm21\vaani\data\`; the autostart entry is the `Vaani` value under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+
 No accounts, analytics or telemetry. With a local model, the only network requests are model
 downloads from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases).
 Audio is kept in memory and never written to disk. Cloud recognition sends audio, and AI
@@ -412,9 +446,10 @@ text-insertion status; include it in bug reports.
 | Text not inserted in one app | It is on the clipboard and in History; press Ctrl+V. Please open an issue naming the app, with `vaani doctor` output. |
 | Poor or empty transcription | Pick the right microphone under **General**; lower the input volume if it clips; for other languages, use Whisper with the language set. |
 | First dictation is slow | The model takes 3 to 6 s to load at start; dictations made meanwhile wait for it. |
-| No tray icon | The desktop needs a StatusNotifierItem host; on GNOME, the AppIndicator extension. Use `vaani settings` meanwhile. |
+| No tray icon | The desktop needs a StatusNotifierItem host; on GNOME, the AppIndicator extension. On Windows, look under the taskbar's **^** overflow arrow. Use `vaani settings` meanwhile. |
 
-For detailed logs: `vaani quit`, then `VAANI_LOG=debug vaani run`.
+For detailed logs: `vaani quit`, then `VAANI_LOG=debug vaani run` (on Windows, in PowerShell:
+`$env:VAANI_LOG="debug"; vaani run`).
 
 ## Development
 
@@ -452,14 +487,25 @@ cargo test --workspace
 **Packaging.** `scripts/package.sh` builds the `.deb`, `.rpm`, tarball, `PKGBUILD` and
 `SHA256SUMS` into `dist/`. CI builds them on Ubuntu 22.04 (for the oldest supported glibc),
 installs each one in Debian, Ubuntu, Fedora, openSUSE and Arch containers, and runs the
-source install script on Fedora, Arch and Tumbleweed. Pushing a `v*` tag publishes a release.
+source install script on Fedora, Arch and Tumbleweed.
+
+**Windows.** Build with the MSVC toolchain and the [gvsbuild](https://github.com/wingtk/gvsbuild)
+GTK 4 bundle: unpack it, put its `bin` on `PATH`, point `PKG_CONFIG_PATH` at its
+`lib\pkgconfig`, and run `cargo build --release`. `scripts/package-windows.ps1` gathers the
+GTK DLLs, icons and pixbuf loaders, then builds the portable zip and the Inno Setup installer
+(`packaging/windows/vaani.iss`). CI does this on `windows-latest` and runs
+`scripts/windows-smoke-test.ps1`: a silent install, a dictation of a recorded sentence into
+Notepad with Right Ctrl, the command line, and a silent uninstall.
+
+Pushing a `v*` tag builds every package and creates one draft release with the Linux and
+Windows files.
 
 **Contributing.** Issues and pull requests are welcome; for larger changes, open an issue
 first. Keep changes covered by the checks above.
 
 ## Roadmap
 
-- Windows
+- Code-signed Windows installer
 - Flatpak and AppImage packages
 
 ## License

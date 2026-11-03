@@ -1,15 +1,14 @@
-//! `vaani run`: the background app. GTK (overlay, settings) runs on the main thread; D-Bus,
-//! the tray and signal handling run on a small tokio runtime; the controller has its own thread.
+//! `vaani run`: the background app. GTK (overlay, settings) runs on the main thread; the
+//! IPC server (D-Bus on Linux, a named pipe on Windows), the Linux tray and signal handling
+//! run on a small tokio runtime; the controller has its own thread, and so does the Windows
+//! tray.
 
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use vaani_core::config::{Config, ConfigWatcher};
-use vaani_core::{DBUS_NAME, DBUS_PATH};
 
 use crate::controller::{Controller, Input};
-use crate::dbus::Service;
 
 pub fn run(show_settings: bool) -> Result<ExitCode> {
     let config_path = vaani_core::paths::config_file().context("no home directory found")?;
@@ -40,6 +39,8 @@ pub fn run(show_settings: bool) -> Result<ExitCode> {
         logs = ?logging.dir,
         "starting Vaani"
     );
+    #[cfg(windows)]
+    crate::notify::register();
     crate::autostart::sync(config.general.autostart);
     let session = vaani_platform::probe();
     tracing::info!(session = ?session.session_type, desktop = ?session.desktop, "session probed");
@@ -48,7 +49,7 @@ pub fn run(show_settings: bool) -> Result<ExitCode> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let ui_rx = crate::ui::channel();
 
-    // Claim the D-Bus name first: a second launch just opens the running app's settings.
+    // Claim the IPC name first: a second launch just opens the running app's settings.
     let (claimed_tx, claimed_rx) = std::sync::mpsc::channel::<Result<bool, String>>();
     {
         let shared = shared.clone();
@@ -68,7 +69,7 @@ pub fn run(show_settings: bool) -> Result<ExitCode> {
                     }
                 };
                 rt.block_on(async move {
-                    let conn = match serve_dbus(shared.clone(), tx.clone()).await {
+                    let conn = match crate::ipc::serve(shared.clone(), tx.clone()).await {
                         Ok(Some(c)) => {
                             let _ = claimed_tx.send(Ok(true));
                             c
@@ -82,19 +83,10 @@ pub fn run(show_settings: bool) -> Result<ExitCode> {
                             return;
                         }
                     };
-                    tokio::spawn(crate::tray::run(shared, tx));
-                    let mut sigterm = match tokio::signal::unix::signal(
-                        tokio::signal::unix::SignalKind::terminate(),
-                    ) {
-                        Ok(s) => s,
-                        Err(_) => return,
-                    };
-                    tokio::select! {
-                        _ = tokio::signal::ctrl_c() => tracing::info!("interrupted"),
-                        _ = sigterm.recv() => tracing::info!("terminated"),
-                    }
+                    crate::tray::start(shared, tx);
+                    wait_for_signal().await;
                     crate::ui::request_quit();
-                    drop(conn);
+                    let _keep = conn;
                 });
             })?;
     }
@@ -102,13 +94,13 @@ pub fn run(show_settings: bool) -> Result<ExitCode> {
         Ok(Ok(true)) => {}
         Ok(Ok(false)) => {
             eprintln!("Vaani is already running; opening its settings.");
-            let _ = crate::dbus::try_call(crate::dbus::Call::ShowSettings);
+            let _ = crate::ipc::try_call(crate::ipc::Call::ShowSettings);
             return Ok(ExitCode::SUCCESS);
         }
         Ok(Err(e)) => anyhow::bail!(e),
-        Err(_) => anyhow::bail!("D-Bus thread failed to start"),
+        Err(_) => anyhow::bail!("IPC thread failed to start"),
     }
-    tracing::info!(name = DBUS_NAME, "listening on D-Bus");
+    tracing::info!("listening for commands");
 
     let needs_setup =
         vaani_models::find(&config.engine.local_model).is_none_or(|m| !m.is_installed());
@@ -135,23 +127,26 @@ pub fn run(show_settings: bool) -> Result<ExitCode> {
     std::process::exit(0);
 }
 
-/// Serve the D-Bus API. Ok(None) if another instance owns the name.
-async fn serve_dbus(
-    shared: Arc<crate::controller::Shared>,
-    tx: crossbeam_channel::Sender<Input>,
-) -> Result<Option<zbus::Connection>> {
-    let conn = zbus::connection::Builder::session()
-        .context("could not connect to the D-Bus session bus")?
-        .serve_at(DBUS_PATH, Service::new(tx, shared))?
-        .build()
-        .await
-        .context("could not connect to the D-Bus session bus")?;
-    match conn
-        .request_name_with_flags(DBUS_NAME, zbus::fdo::RequestNameFlags::DoNotQueue.into())
-        .await
+/// Wait for Ctrl+C (and SIGTERM on Linux).
+async fn wait_for_signal() {
+    #[cfg(unix)]
     {
-        Ok(_) => Ok(Some(conn)),
-        Err(zbus::Error::NameTaken) => Ok(None),
-        Err(e) => Err(e).context("could not claim the D-Bus name"),
+        let Ok(mut sigterm) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        else {
+            return std::future::pending().await;
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => tracing::info!("interrupted"),
+            _ = sigterm.recv() => tracing::info!("terminated"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            tracing::info!("interrupted");
+        } else {
+            std::future::pending::<()>().await;
+        }
     }
 }
