@@ -80,7 +80,10 @@ jobs:
         run: |
           if command -v dnf; then dnf install -y curl tar gzip findutils
           elif command -v pacman; then pacman -Syu --noconfirm curl tar gzip
-          else zypper --non-interactive install curl tar gzip; fi
+          else
+            # openSUSE mirrors are sometimes mid-sync; try again.
+            for i in 1 2 3; do zypper --non-interactive install curl tar gzip && break; sleep 20; done
+          fi
       - uses: actions/checkout@v4
       - name: Install from source
         run: ./scripts/install.sh

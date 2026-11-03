@@ -59,7 +59,10 @@ cat > "$DEB/DEBIAN/postinst" <<'POSTINST'
 set -e
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
 command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
-command -v udevadm >/dev/null && { udevadm control --reload || true; udevadm trigger --subsystem-match=misc --action=change || true; }
+if command -v udevadm >/dev/null; then
+  udevadm control --reload || true
+  udevadm trigger --subsystem-match=misc --action=change || true
+fi
 POSTINST
 chmod 755 "$DEB/DEBIAN/postinst"
 dpkg-deb --root-owner-group --build "$DEB" "$DIST/vaani_${VERSION}_${ARCH}.deb" >/dev/null
