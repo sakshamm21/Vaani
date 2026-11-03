@@ -386,40 +386,14 @@ impl Service {
         self.serve_for(Duration::from_millis(40), &mut prefetched)?;
         self.wait_modifiers_released();
         let started = Instant::now();
-        self.send_paste(terminal)?;
-        tracing::debug!(%app, terminal, "paste key sent");
+        let mut read_at = self.paste_and_wait(terminal, &app, Duration::from_millis(1500))?;
 
-        // 3. Serve until the app has read the text. Only reads after the key press count:
-        //    clipboard managers and file managers read every new clipboard right away, so a
-        //    read before the key press says nothing about the paste.
-        let deadline = started + Duration::from_millis(1500);
-        let mut read_at: Option<Instant> = None;
-        while Instant::now() < deadline {
-            // Keep serving a while after the first read: some apps ask several times.
-            if read_at.is_some_and(|t| t.elapsed() > Duration::from_millis(300)) {
-                break;
-            }
-            match self.conn.poll_for_event().map_err(x)? {
-                Some(Event::SelectionRequest(req)) => {
-                    let served = self.serve(&req)?;
-                    tracing::debug!(
-                        requestor = req.requestor,
-                        target = req.target,
-                        served,
-                        "clipboard read after paste"
-                    );
-                    if served && req.target != self.a.targets && req.target != self.a.timestamp {
-                        read_at.get_or_insert_with(Instant::now);
-                    }
-                }
-                Some(Event::SelectionClear(_)) => {
-                    // Someone copied during the paste; leave their content alone.
-                    self.owned = false;
-                    break;
-                }
-                Some(_) => {}
-                None => thread::sleep(Duration::from_millis(1)),
-            }
+        // An app that has only just opened can drop the first paste key while its text box is
+        // still taking focus. Try once more once focus has settled: a paste lands whole or not
+        // at all, while typed keys sent too early lose the start of the text.
+        if read_at.is_none() && !prefetched && self.owned && mode == Mode::Auto {
+            self.wait_focus_settled();
+            read_at = self.paste_and_wait(terminal, &app, Duration::from_millis(700))?;
         }
 
         let read_at = match read_at {
@@ -434,6 +408,7 @@ impl Service {
             }
             None if mode == Mode::Auto => {
                 tracing::info!(%app, "the app ignored the paste; typing the text instead");
+                self.wait_focus_settled();
                 let typed = self.type_text(text);
                 self.restore(saved)?;
                 return match typed {
@@ -600,6 +575,74 @@ impl Service {
 
     /// Wait (up to 400 ms) until Shift/Ctrl/Alt/Super are physically up, so our Ctrl+V is not
     /// turned into something else by a key the user is still holding.
+    /// Press paste and serve the clipboard until the app has read it. Only reads after the key
+    /// press count: clipboard managers and file managers read every new clipboard right away,
+    /// so a read before the key press says nothing about the paste.
+    fn paste_and_wait(
+        &mut self,
+        terminal: bool,
+        app: &str,
+        limit: Duration,
+    ) -> Result<Option<Instant>, InjectError> {
+        self.send_paste(terminal)?;
+        tracing::debug!(%app, terminal, "paste key sent");
+        let deadline = Instant::now() + limit;
+        let mut read_at: Option<Instant> = None;
+        while Instant::now() < deadline {
+            // Keep serving a while after the first read: some apps ask several times.
+            if read_at.is_some_and(|t| t.elapsed() > Duration::from_millis(300)) {
+                break;
+            }
+            match self.conn.poll_for_event().map_err(x)? {
+                Some(Event::SelectionRequest(req)) => {
+                    let served = self.serve(&req)?;
+                    tracing::debug!(
+                        requestor = req.requestor,
+                        target = req.target,
+                        served,
+                        "clipboard read after paste"
+                    );
+                    if served && req.target != self.a.targets && req.target != self.a.timestamp {
+                        read_at.get_or_insert_with(Instant::now);
+                    }
+                }
+                Some(Event::SelectionClear(_)) => {
+                    // Someone copied during the paste; leave their content alone.
+                    self.owned = false;
+                    break;
+                }
+                Some(_) => {}
+                None => thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        Ok(read_at)
+    }
+
+    /// Wait (up to 600 ms) until keyboard focus has stayed on one window for 150 ms, so keys
+    /// are not sent to a window that is still opening.
+    fn wait_focus_settled(&self) {
+        let focus = || {
+            self.conn
+                .get_input_focus()
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| r.focus)
+        };
+        let end = Instant::now() + Duration::from_millis(600);
+        let mut last = focus();
+        let mut since = Instant::now();
+        while Instant::now() < end {
+            thread::sleep(Duration::from_millis(25));
+            let now = focus();
+            if now != last {
+                last = now;
+                since = Instant::now();
+            } else if since.elapsed() >= Duration::from_millis(150) {
+                return;
+            }
+        }
+    }
+
     fn wait_modifiers_released(&self) {
         let end = Instant::now() + Duration::from_millis(400);
         while Instant::now() < end {

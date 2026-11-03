@@ -62,7 +62,16 @@ pub fn run(text: Option<String>, file: Option<PathBuf>, models: bool) -> Result<
     for line in &lines {
         let t = Instant::now();
         let ms = || t.elapsed().as_millis();
-        match vaani_llm::clean(line, &req) {
+        // Free tiers allow a few requests a minute; wait out the limit instead of skipping lines.
+        let mut result = vaani_llm::clean(line, &req);
+        for _ in 0..5 {
+            let Err(vaani_llm::LlmError::RateLimited(_, hint)) = &result else {
+                break;
+            };
+            std::thread::sleep(hint.unwrap_or(Duration::from_secs(5)) + Duration::from_millis(250));
+            result = vaani_llm::clean(line, &req);
+        }
+        match result {
             Ok(out) => {
                 applied += 1;
                 println!("IN   {line}\nOUT  {out}  ({} ms)\n", ms());
