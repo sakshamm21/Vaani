@@ -189,6 +189,8 @@ and does not use `sudo` at runtime.
 | **Esc** while recording | Cancels. Nothing is inserted. |
 | Stop talking in hands-free mode | Optionally finishes on its own after 3, 5 or 10 seconds of silence. |
 | Tray icon → **Paste last** | Inserts the most recent dictation again. |
+| Tray icon → **Speech engine** | Switches between your downloaded models and the cloud engine. |
+| Tray icon → **Pause history** | Stops saving new dictations until you turn it off again. |
 | Tray icon → **Settings**, or Vaani in the application menu | Opens the settings window. |
 
 While recording, an indicator at the bottom of the screen shows the input level and elapsed
@@ -260,6 +262,7 @@ immediately.
 | Pause music while dictating | Pauses media players while recording and resumes them afterwards. On by default. |
 | Start Vaani when I log in | Adds or removes the autostart entry. |
 | History | How many dictations to keep: none, the last 20 (default), 100 or 1,000, or all. Older entries are deleted automatically. |
+| Pause history | New dictations are not saved while this is on. Also in the tray menu. |
 
 **Speech Model** chooses between local and cloud recognition, sets the language, and manages
 downloaded models. **Keep everything on this computer** turns cloud recognition off
@@ -269,7 +272,12 @@ entirely, so audio never leaves the machine.
 
 **Cloud** configures the provider, API key, model and endpoint for cloud recognition.
 
-**History** lists previous dictations with search and copy. **Clear all** deletes them.
+**History** lists previous dictations with search, copy and edit. When you correct a word or
+a short phrase (for example "vani" to "Vaani"), Vaani adds the fix to your Dictionary and
+writes it correctly from then on. **Clear all** deletes the list.
+
+**Overview** shows lifetime totals: dictations, words, your speaking pace in words per minute,
+and the time saved compared with typing at 40 words per minute.
 
 **About** shows the version and links to the log, model and configuration folders, and copies
 a diagnostic report for bug reports.

@@ -681,8 +681,11 @@ impl Job {
             .unwrap_or_default();
 
         // Never lose words: save before typing.
+        if let Some(h) = self.history.as_ref().and_then(|h| h.lock().ok()) {
+            let _ = h.count(&text, audio_ms);
+        }
         let limit = self.config.privacy.history_limit();
-        let id = if limit == Some(0) {
+        let id = if !self.config.privacy.saves_history() {
             None
         } else {
             self.history

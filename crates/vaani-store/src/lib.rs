@@ -54,9 +54,66 @@ impl History {
                app TEXT NOT NULL DEFAULT '',
                inserted INTEGER NOT NULL DEFAULT 0
              );
-             CREATE INDEX IF NOT EXISTS history_at ON history(at);",
+             CREATE INDEX IF NOT EXISTS history_at ON history(at);
+             CREATE TABLE IF NOT EXISTS totals (
+               id INTEGER PRIMARY KEY CHECK (id = 1),
+               dictations INTEGER NOT NULL,
+               words INTEGER NOT NULL,
+               audio_ms INTEGER NOT NULL
+             );",
         )?;
-        Ok(Self { db })
+        let h = Self { db };
+        // Lifetime totals start from whatever history already holds.
+        let has: i64 =
+            h.db.query_row("SELECT COUNT(*) FROM totals", [], |r| r.get(0))?;
+        if has == 0 {
+            let mut n = 0i64;
+            let mut words = 0i64;
+            let mut audio = 0i64;
+            {
+                let mut st = h.db.prepare("SELECT text, audio_ms FROM history")?;
+                for row in
+                    st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+                {
+                    let (t, a) = row?;
+                    n += 1;
+                    words += t.split_whitespace().count() as i64;
+                    audio += a;
+                }
+            }
+            h.db.execute(
+                "INSERT INTO totals (id, dictations, words, audio_ms) VALUES (1, ?1, ?2, ?3)",
+                params![n, words, audio],
+            )?;
+        }
+        Ok(h)
+    }
+
+    /// Count a dictation in the lifetime totals (also when history is paused).
+    pub fn count(&self, text: &str, audio_ms: i64) -> Result<(), StoreError> {
+        self.db.execute(
+            "UPDATE totals SET dictations = dictations + 1, words = words + ?1, audio_ms = audio_ms + ?2 WHERE id = 1",
+            params![text.split_whitespace().count() as i64, audio_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Lifetime totals: (dictations, words, seconds of speech).
+    pub fn totals(&self) -> Result<(i64, i64, i64), StoreError> {
+        Ok(self.db.query_row(
+            "SELECT dictations, words, audio_ms / 1000 FROM totals WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?)
+    }
+
+    /// Replace an entry's text (corrected in the History page).
+    pub fn update_text(&self, id: i64, text: &str) -> Result<(), StoreError> {
+        self.db.execute(
+            "UPDATE history SET text = ?2 WHERE id = ?1",
+            params![id, text],
+        )?;
+        Ok(())
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
@@ -152,6 +209,16 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn totals_survive_trim() {
+        let h = History::open_in_memory().unwrap();
+        h.add("one two", "", "e", 2000, "").unwrap();
+        h.count("one two", 2000).unwrap();
+        h.count("three", 1000).unwrap();
+        h.trim(0).unwrap();
+        assert_eq!(h.totals().unwrap(), (2, 3, 3));
+    }
 
     #[test]
     fn trim_keeps_newest() {

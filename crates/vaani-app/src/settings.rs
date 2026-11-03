@@ -68,6 +68,8 @@ struct Inner {
     hero_progress: gtk4::ProgressBar,
     stat_n: gtk4::Label,
     stat_w: gtk4::Label,
+    stat_wpm: gtk4::Label,
+    stat_saved: gtk4::Label,
     // Speech
     models_box: gtk4::Box,
     model_rows: RefCell<HashMap<String, ModelRow>>,
@@ -83,6 +85,7 @@ struct Inner {
     // History
     history_list: gtk4::ListBox,
     history_search: gtk4::SearchEntry,
+    history_note: gtk4::Label,
     last_status: RefCell<Option<EngineStatus>>,
     last_history_check: RefCell<Instant>,
     last_history_top: RefCell<i64>,
@@ -127,7 +130,7 @@ fn set_theme_icon(btn: &gtk4::Button) {
 }
 
 /// Change the config, save it, and update the shared copy so the UI stays consistent.
-fn update_config(shared: &Shared, f: impl FnOnce(&mut Config)) {
+pub(crate) fn update_config(shared: &Shared, f: impl FnOnce(&mut Config)) {
     let mut c = shared.config.lock().map(|c| c.clone()).unwrap_or_default();
     f(&mut c);
     if let Some(p) = config_path() {
@@ -260,6 +263,8 @@ impl Settings {
             hero_progress: gtk4::ProgressBar::new(),
             stat_n: label("0", "stat-num"),
             stat_w: label("0", "stat-num"),
+            stat_wpm: label("0", "stat-num"),
+            stat_saved: label("0", "stat-num"),
             models_box: gtk4::Box::new(Orientation::Vertical, 0),
             model_rows: RefCell::new(HashMap::new()),
             downloads: RefCell::new(HashMap::new()),
@@ -272,6 +277,7 @@ impl Settings {
             about_logo: gtk4::Image::from_icon_name(crate::keys::app_icon()),
             history_list: gtk4::ListBox::new(),
             history_search: gtk4::SearchEntry::new(),
+            history_note: label("", "row-sub"),
             last_status: RefCell::new(None),
             last_history_check: RefCell::new(Instant::now() - Duration::from_secs(10)),
             last_history_top: RefCell::new(-1),
@@ -303,8 +309,8 @@ impl Settings {
         let cfg = config(&shared);
         if !cfg.general.onboarded {
             let used = open_history()
-                .and_then(|h| h.stats().ok())
-                .is_some_and(|(n, _)| n > 0);
+                .and_then(|h| h.totals().ok())
+                .is_some_and(|(n, _, _)| n > 0);
             if used || std::env::var("VAANI_PAGE").is_ok() {
                 update_config(&shared, |c| c.general.onboarded = true);
             } else {
@@ -622,11 +628,20 @@ impl Settings {
                 i.hero_badge.set_text("error");
             }
         }
-        let (n, words) = open_history()
-            .and_then(|h| h.stats().ok())
-            .unwrap_or((0, 0));
+        let (n, words, secs) = open_history()
+            .and_then(|h| h.totals().ok())
+            .unwrap_or((0, 0, 0));
         i.stat_n.set_text(&n.to_string());
         i.stat_w.set_text(&words.to_string());
+        // Speaking pace, and the time saved against typing at 40 words a minute.
+        let wpm = if secs > 0 { words * 60 / secs } else { 0 };
+        i.stat_wpm.set_text(&wpm.to_string());
+        let saved = (words * 60 / 40 - secs).max(0);
+        i.stat_saved.set_text(&if saved >= 3600 {
+            format!("{:.1} h", saved as f64 / 3600.0)
+        } else {
+            format!("{} min", saved / 60)
+        });
         i.key_label.set_text(&key);
         i.home_key.set_text(&key);
     }
@@ -765,6 +780,80 @@ impl Settings {
             });
     }
 
+    /// Swap a History row for an editor. Saving a small fix ("vani" -> "Vaani") also adds
+    /// it to the Dictionary so the next dictation gets it right.
+    fn edit_history(&self, row_box: &gtk4::Box, id: i64, old: &str) {
+        while let Some(c) = row_box.first_child() {
+            row_box.remove(&c);
+        }
+        let frame = gtk4::Box::new(Orientation::Vertical, 0);
+        frame.add_css_class("tryit");
+        frame.set_hexpand(true);
+        let tv = gtk4::TextView::builder()
+            .wrap_mode(gtk4::WrapMode::WordChar)
+            .left_margin(10)
+            .right_margin(10)
+            .top_margin(6)
+            .bottom_margin(6)
+            .build();
+        tv.buffer().set_text(old);
+        frame.append(&tv);
+        row_box.append(&frame);
+        let save = gtk4::Button::with_label("Save");
+        save.add_css_class("suggested-action");
+        save.set_valign(Align::Center);
+        let cancel = gtk4::Button::with_label("Cancel");
+        cancel.set_valign(Align::Center);
+        row_box.append(&cancel);
+        row_box.append(&save);
+        tv.grab_focus();
+        {
+            let weak = Rc::downgrade(&self.inner);
+            cancel.connect_clicked(move |_| {
+                if let Some(inner) = weak.upgrade() {
+                    Settings { inner }.refresh_history();
+                }
+            });
+        }
+        let weak = Rc::downgrade(&self.inner);
+        let old = old.to_string();
+        save.connect_clicked(move |_| {
+            let Some(inner) = weak.upgrade() else { return };
+            let buf = tv.buffer();
+            let new = buf
+                .text(&buf.start_iter(), &buf.end_iter(), false)
+                .trim()
+                .to_string();
+            if new.is_empty() || new == old {
+                Settings { inner }.refresh_history();
+                return;
+            }
+            if let Some(h) = open_history() {
+                let _ = h.update_text(id, &new);
+            }
+            let learned = vaani_text::learn(&old, &new);
+            let note = &inner.history_note;
+            if let Some((from, to)) = &learned {
+                update_config(&inner.shared, |c| {
+                    let reps = &mut c.dictionary.replacements;
+                    reps.retain(|r| !r.from.eq_ignore_ascii_case(from));
+                    reps.push(vaani_core::config::Replacement {
+                        from: from.clone(),
+                        to: to.clone(),
+                    });
+                });
+                note.set_text(&format!(
+                    "Learned: Vaani will write “{to}” when it hears “{from}”. You can remove this under Dictionary."
+                ));
+                note.set_visible(true);
+            } else {
+                note.set_visible(false);
+            }
+            // Glib idle: the row holding this button is about to be rebuilt.
+            glib::idle_add_local_once(move || Settings { inner }.refresh_history());
+        });
+    }
+
     fn refresh_history(&self) {
         let i = &self.inner;
         while let Some(c) = i.history_list.first_child() {
@@ -805,6 +894,19 @@ impl Settings {
                 btn.clipboard().set_text(&s);
             });
             b.append(&copy);
+            let edit = gtk4::Button::from_icon_name("document-edit-symbolic");
+            edit.set_tooltip_text(Some("Correct this dictation"));
+            edit.set_valign(Align::Center);
+            {
+                let weak = Rc::downgrade(&self.inner);
+                let (row_box, id, old) = (b.clone(), e.id, e.text.trim_end().to_string());
+                edit.connect_clicked(move |_| {
+                    if let Some(inner) = weak.upgrade() {
+                        Settings { inner }.edit_history(&row_box, id, &old);
+                    }
+                });
+            }
+            b.append(&edit);
             i.history_list.append(&b);
         }
         if shown == 0 {
@@ -935,6 +1037,8 @@ fn build_home(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     for (num, cls, what) in [
         (&inner.stat_n, "c1", "dictations"),
         (&inner.stat_w, "c2", "words"),
+        (&inner.stat_wpm, "c3", "words per minute"),
+        (&inner.stat_saved, "c4", "saved vs. typing"),
     ] {
         let t = gtk4::Box::new(Orientation::Vertical, 2);
         t.add_css_class("stat");
@@ -1327,11 +1431,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     ];
     let keep_names: Vec<&str> = KEEP.iter().map(|(_, n)| *n).collect();
     let keep = gtk4::DropDown::from_strings(&keep_names);
-    let current = if cfg.privacy.incognito {
-        0
-    } else {
-        cfg.privacy.keep_history
-    };
+    let current = cfg.privacy.keep_history;
     keep.set_selected(KEEP.iter().position(|(n, _)| *n == current).unwrap_or(1) as u32);
     {
         let shared = shared.clone();
@@ -1340,22 +1440,30 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
                 .get(d.selected() as usize)
                 .map(|(n, _)| *n)
                 .unwrap_or(20);
-            update_config(&shared, |c| {
-                c.privacy.keep_history = n;
-                c.privacy.incognito = false;
-            });
+            update_config(&shared, |c| c.privacy.keep_history = n);
             // Apply now, not only on the next dictation.
             if let (Some(h), Ok(n)) = (open_history(), usize::try_from(n)) {
                 let _ = h.trim(n);
             }
         });
     }
+    let pause = {
+        let shared = shared.clone();
+        switch(cfg.privacy.incognito, move |v| {
+            update_config(&shared, |c| c.privacy.incognito = v)
+        })
+    };
     content.append(&card(&[
         row("Start Vaani when I log in", "", &s5),
         row(
             "History",
             "How many dictations to keep. Older ones are deleted automatically. Audio is never stored.",
             &keep,
+        ),
+        row(
+            "Pause history",
+            "New dictations are not saved until you turn this off. Also in the tray menu.",
+            &pause,
         ),
     ]));
     sw
@@ -1882,6 +1990,10 @@ fn build_history(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     inner
         .history_list
         .set_selection_mode(gtk4::SelectionMode::None);
+    inner.history_note.add_css_class("note");
+    inner.history_note.set_margin_top(10);
+    inner.history_note.set_visible(false);
+    content.append(&inner.history_note);
     inner.history_list.add_css_class("card");
     inner.history_list.set_margin_top(12);
     content.append(&inner.history_list);

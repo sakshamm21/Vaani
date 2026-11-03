@@ -171,6 +171,37 @@ fn apply_snippets(text: &str, snippets: &[(String, String)]) -> String {
     apply_replacements(text, snippets)
 }
 
+/// When a dictation is corrected by hand, find the one small change worth remembering:
+/// up to three words replaced by up to three words ("vani" -> "Vaani"). Bigger edits are
+/// rewrites, not spelling fixes, and return None.
+pub fn learn(old: &str, new: &str) -> Option<(String, String)> {
+    let strip = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+    let a: Vec<String> = old
+        .split_whitespace()
+        .map(strip)
+        .filter(|w| !w.is_empty())
+        .collect();
+    let b: Vec<String> = new
+        .split_whitespace()
+        .map(strip)
+        .filter(|w| !w.is_empty())
+        .collect();
+    let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let suf = a[pre..]
+        .iter()
+        .rev()
+        .zip(b[pre..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let from = &a[pre..a.len() - suf];
+    let to = &b[pre..b.len() - suf];
+    if from.is_empty() || to.is_empty() || from.len() > 3 || to.len() > 3 {
+        return None;
+    }
+    let (from, to) = (from.join(" "), to.join(" "));
+    (from != to).then_some((from, to))
+}
+
 /// Clean raw model output. Returns None when there is nothing worth inserting.
 pub fn clean(raw: &str, rules: &Rules) -> Option<String> {
     let mut text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -345,5 +376,19 @@ mod tests {
             clean("Send it to my address please.", &rules).as_deref(),
             Some("Send it to 12 Park Street\nDelhi please.")
         );
+    }
+
+    #[test]
+    fn learns_small_fixes_only() {
+        assert_eq!(
+            learn("I use vani every day.", "I use Vaani every day."),
+            Some(("vani".into(), "Vaani".into()))
+        );
+        assert_eq!(
+            learn("Meet sack tomorrow", "Meet Saksham Malhotra tomorrow"),
+            Some(("sack".into(), "Saksham Malhotra".into()))
+        );
+        assert_eq!(learn("Hello there.", "Hello there!"), None);
+        assert_eq!(learn("one two three four five", "a b c d e"), None);
     }
 }

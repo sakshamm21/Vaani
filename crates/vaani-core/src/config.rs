@@ -301,7 +301,7 @@ impl Default for Insert {
 pub struct Privacy {
     /// Block every network call (cloud engines and AI cleanup are refused).
     pub local_only: bool,
-    /// Don't save dictations to history (same as `keep_history = 0`).
+    /// History is paused: new dictations are not saved; older entries are kept.
     pub incognito: bool,
     /// How many dictations History keeps: the newest N, 0 for none, -1 for all.
     pub keep_history: i64,
@@ -320,10 +320,12 @@ impl Default for Privacy {
 impl Privacy {
     /// Effective limit: `None` keeps everything, `Some(0)` keeps nothing.
     pub fn history_limit(&self) -> Option<usize> {
-        if self.incognito {
-            return Some(0);
-        }
         usize::try_from(self.keep_history).ok()
+    }
+
+    /// Whether a new dictation is saved: not while history is paused or set to keep none.
+    pub fn saves_history(&self) -> bool {
+        !self.incognito && self.keep_history != 0
     }
 }
 
