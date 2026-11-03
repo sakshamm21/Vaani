@@ -44,6 +44,13 @@ use cli::{Cli, Cmd, ModelsCmd};
 use ipc::Call;
 
 fn main() -> ExitCode {
+    // Speech worker mode: vaani.exe started by itself (see vaani_stt::local), before anything
+    // touches the console or the standard handles, which are the protocol pipes.
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some(vaani_stt::local::WORKER_ARG) {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        std::process::exit(vaani_worker::run(&args));
+    }
     #[cfg(windows)]
     attach_console();
     lighter_rendering();

@@ -251,13 +251,20 @@ fn os_release() -> String {
         .unwrap_or_else(|| std::env::consts::OS.to_string())
 }
 
-const WORKER: &str = if cfg!(windows) {
-    "vaani-worker.exe"
-} else {
-    "vaani-worker"
-};
+/// On Windows the speech worker is part of vaani.exe.
+#[cfg(windows)]
+fn worker_check() -> Check {
+    Check {
+        ok: true,
+        detail: "built into vaani.exe".into(),
+    }
+}
+
+#[cfg(not(windows))]
+const WORKER: &str = "vaani-worker";
 
 /// Look for `vaani-worker` next to this binary, then on PATH.
+#[cfg(not(windows))]
 fn worker_check() -> Check {
     let beside = std::env::current_exe()
         .ok()

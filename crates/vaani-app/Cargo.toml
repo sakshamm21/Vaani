@@ -44,6 +44,7 @@ ksni.workspace = true
 x11rb.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+vaani-worker.workspace = true
 gdk4-win32.workspace = true
 pango = { version = "0.22", features = ["v1_56"] }
 tray-icon.workspace = true

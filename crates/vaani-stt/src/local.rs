@@ -33,7 +33,18 @@ pub struct LocalEngine {
     worker: Option<Worker>,
 }
 
+/// On Windows the worker is built into `vaani.exe`, which starts a copy of itself with this
+/// first argument. One program for application control policies (Smart App Control) to allow.
+pub const WORKER_ARG: &str = "--speech-worker";
+
+/// The program to start as the worker: on Windows the running `vaani.exe` itself.
+#[cfg(windows)]
+pub fn worker_path() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("vaani.exe"))
+}
+
 /// `vaani-worker` next to the running binary, else on PATH.
+#[cfg(not(windows))]
 pub fn worker_path() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -72,6 +83,7 @@ impl LocalEngine {
         let mut cmd = Command::new(&self.worker_path);
         #[cfg(windows)]
         {
+            cmd.arg(WORKER_ARG);
             // No console window for the worker.
             use std::os::windows::process::CommandExt as _;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
