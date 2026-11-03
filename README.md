@@ -41,6 +41,7 @@
 | **Private by default** | Twelve local speech models through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): Parakeet, Whisper, Moonshine and SenseVoice. No account, no telemetry. |
 | **Fast cloud option** | Bring your own key for Groq, OpenAI or any OpenAI-compatible server. Keys live in your system keyring. |
 | **Never loses a word** | If the model is still loading, Vaani waits for it. If an app ignores the paste, the text is typed instead. If the cloud is unreachable, an installed local model takes over. |
+| **AI clean-up (optional)** | A language model fixes punctuation, repeated words and self-corrections ("at 3, actually 4" becomes "at 4"). Groq, OpenAI, Anthropic, Ollama or any compatible server. Off by default. |
 | **Spoken commands** | Say "new line", "full stop" or "scratch that". Save snippets and word replacements in the Dictionary. |
 | **Two ways to talk** | Hold the key to talk, or tap once for hands-free and tap again to finish. Esc cancels. |
 | **Light and dark** | Follows your desktop theme, or set it yourself from the title bar. |
@@ -220,7 +221,30 @@ instead, which also works in older and Wine applications. Each dictation is also
 application does not accept the paste. History keeps the last 20 dictations by default; this
 can be changed, or turned off, under **General → History**.
 
-Recordings are limited to five minutes.
+Recordings are limited to five minutes. During a long dictation Vaani transcribes what you
+have said so far at each pause, so the text appears shortly after you stop, however long you
+spoke.
+
+### AI clean-up
+
+Off by default. When it is on, each dictation of four words or more is sent to a language
+model that fixes punctuation, capitalisation, repeated words and spoken self-corrections. It
+does not answer questions or follow instructions in what you say: if the reply is empty, cut
+short, an answer instead of your words, or mostly new words, Vaani discards it and
+inserts what you said. It is skipped in terminals and code editors.
+
+| Provider | Default model | Notes |
+| --- | --- | --- |
+| Groq | `openai/gpt-oss-20b` | Uses the same key as Groq speech recognition. Free tier: 30 requests a minute. |
+| OpenAI | `gpt-4o-mini` | |
+| Anthropic | `claude-haiku-5-5` | |
+| Ollama | `llama3.2:3b` | Runs on this computer; no key. Allowed when **Keep everything on this computer** is on. |
+| OpenAI-compatible | set by you | Any server implementing `/v1/chat/completions` |
+
+The **AI Clean-up** page sets the provider, key, model, tone (clean, formal or casual), an
+extra instruction such as "British spelling", and the full prompt, and has a button to test it
+on a sample sentence. If the model does not reply within the time limit (1.5 seconds by
+default), the dictation is inserted as transcribed.
 
 ## Settings
 
@@ -271,6 +295,8 @@ entirely, so audio never leaves the machine.
 **Dictionary** turns spoken commands on or off and manages replacements and snippets.
 
 **Cloud** configures the provider, API key, model and endpoint for cloud recognition.
+
+**AI Clean-up** configures the optional language-model pass; see [AI clean-up](#ai-clean-up).
 
 **History** lists previous dictations with search, copy and edit. When you correct a word or
 a short phrase (for example "vani" to "Vaani"), Vaani offers to add the fix to your
@@ -344,6 +370,7 @@ only while a cloud engine is selected.
 | `vaani models remove <id>` | Delete a downloaded model. |
 | `vaani history [count]` | Print recent dictations. |
 | `vaani doctor [--json]` | Print a diagnostic report. |
+| `vaani cleanup "<text>"` | Run AI clean-up on the text with your current settings and print the result. `--file <path>` runs one line at a time; `--models` lists the provider's models. |
 | `vaani quit` | Stop Vaani. |
 
 `vaani toggle` can be bound to a key in your desktop's keyboard settings if you prefer a key
@@ -362,7 +389,8 @@ combination that Vaani's own shortcut does not support.
 Vaani has no accounts, analytics or telemetry. With a local model it makes network requests
 only to download models from the
 [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases) on GitHub. Audio
-recordings are kept in memory only and are never written to disk.
+recordings are kept in memory only and are never written to disk. AI clean-up, when turned
+on, sends the dictated text (not audio) to the chosen provider.
 
 ## Troubleshooting
 
@@ -471,6 +499,7 @@ crates/
   vaani-hotkey     Global shortcut (X11 XInput2)
   vaani-inject     Text insertion (clipboard and XTest)
   vaani-text       Text clean-up
+  vaani-llm        Optional AI clean-up (language-model providers and guardrails)
   vaani-store      History (SQLite) and API keys (Secret Service)
   vaani-models     Model catalogue and downloads
   vaani-core       Configuration, state machine and paths
@@ -488,7 +517,6 @@ instance over D-Bus (`io.github.sakshamm21.Vaani`).
 ## Roadmap
 
 - Wayland support (GNOME, KDE Plasma, Hyprland, Sway).
-- Optional AI clean-up of punctuation and formatting, with local or cloud language models.
 - More cloud providers.
 - Flatpak and AppImage packages.
 
