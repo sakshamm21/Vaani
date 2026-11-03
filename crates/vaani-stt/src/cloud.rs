@@ -60,6 +60,8 @@ impl CloudEngine {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(8))
+            .pool_idle_timeout(Duration::from_secs(600))
+            .tcp_keepalive(Duration::from_secs(30))
             .build()
             .map_err(|e| SttError::NotReady(e.to_string()))?;
         Ok(Self {
@@ -87,6 +89,25 @@ impl SttEngine for CloudEngine {
 
     fn is_cloud(&self) -> bool {
         true
+    }
+
+    fn warm(&mut self) {
+        // Any cheap request opens the connection and finishes the TLS handshake; the client
+        // keeps it for the transcription that follows. The answer itself doesn't matter.
+        let t = Instant::now();
+        let mut req = self
+            .client
+            .get(format!("{}/models", self.base_url))
+            .timeout(Duration::from_secs(2));
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let ok = req.send().map(|r| r.status().as_u16()).unwrap_or(0);
+        tracing::debug!(
+            status = ok,
+            ms = t.elapsed().as_millis() as u64,
+            "cloud connection warmed"
+        );
     }
 
     fn transcribe(&mut self, samples: &[f32], language: &str) -> Result<Transcript, SttError> {

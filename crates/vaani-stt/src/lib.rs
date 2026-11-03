@@ -36,4 +36,7 @@ pub trait SttEngine: Send {
     fn is_cloud(&self) -> bool {
         false
     }
+    /// Called when a recording starts, so the engine can get ready while the user speaks
+    /// (a cloud engine opens its connection then, instead of after the key is released).
+    fn warm(&mut self) {}
 }

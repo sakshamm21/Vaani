@@ -415,6 +415,22 @@ impl Controller {
         }
     }
 
+    /// Let a cloud engine open its connection while the user speaks.
+    fn warm_engine(&self) {
+        if !matches!(self.shared.engine(), EngineStatus::Ready(_)) {
+            return;
+        }
+        let engine = self.engine.clone();
+        let _ = thread::Builder::new().name("warm".into()).spawn(move || {
+            // try_lock: never hold up a transcription that is already running.
+            if let Ok(mut slot) = engine.try_lock() {
+                if let Some(e) = slot.as_mut().filter(|e| e.is_cloud()) {
+                    e.warm();
+                }
+            }
+        });
+    }
+
     /// While a long dictation is still being spoken, transcribe what is done so far.
     fn transcribe_early(&mut self) {
         let Some(rec) = &self.recording else { return };
@@ -556,6 +572,7 @@ impl Controller {
                 Ok(r) => {
                     self.recording = Some(r);
                     self.last_voice = None;
+                    self.warm_engine();
                     if self.config.audio.pause_media {
                         crate::media::pause();
                     }

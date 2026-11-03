@@ -182,6 +182,17 @@ impl ksni::Tray for VaaniTray {
                 ..Default::default()
             }
             .into(),
+            CheckmarkItem {
+                label: "AI clean-up".into(),
+                checked: self.config().cleanup.ai_enabled,
+                activate: Box::new(|t: &mut Self| {
+                    crate::settings::update_config(&t.shared, |c| {
+                        c.cleanup.ai_enabled = !c.cleanup.ai_enabled
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
             MenuItem::Separator,
             StandardItem {
                 label: "Settings…".into(),
@@ -229,6 +240,7 @@ pub async fn run(shared: Arc<Shared>, tx: Sender<Input>) {
         let cfg = shared.config.lock().ok().map(|c| {
             (
                 c.privacy.incognito,
+                c.cleanup.ai_enabled,
                 c.privacy.local_only,
                 c.engine.kind,
                 c.engine.local_model.clone(),

@@ -55,6 +55,9 @@ struct ModelRow {
     progress: gtk4::ProgressBar,
 }
 
+/// A settings switch and the config value it mirrors.
+type SyncedSwitch = (gtk4::Switch, fn(&Config) -> bool);
+
 struct Inner {
     shared: Arc<Shared>,
     ctrl: Sender<Input>,
@@ -94,6 +97,8 @@ struct Inner {
     // First-run setup
     body: gtk4::Box,
     setup: RefCell<Option<Setup>>,
+    /// Switches that can also change from the tray menu, kept in step with the config.
+    synced: RefCell<Vec<SyncedSwitch>>,
 }
 
 /// The first-run page: get a speech engine ready, then three live checks.
@@ -290,6 +295,7 @@ impl Settings {
             last_history_top: RefCell::new(-1),
             body: gtk4::Box::new(Orientation::Horizontal, 0),
             setup: RefCell::new(None),
+            synced: RefCell::new(Vec::new()),
         });
 
         stack.add_titled(&build_home(&inner), Some("home"), "Overview");
@@ -394,6 +400,14 @@ impl Settings {
         let i = &self.inner;
         self.sync_theme_button();
         self.tick_setup();
+        if !i.synced.borrow().is_empty() {
+            let cfg = config(&i.shared);
+            for (sw, get) in i.synced.borrow().iter() {
+                if sw.is_active() != get(&cfg) {
+                    sw.set_active(get(&cfg));
+                }
+            }
+        }
         // Engine status changes.
         let status = i.shared.engine();
         if i.last_status.borrow().as_ref() != Some(&status) {
@@ -1455,6 +1469,10 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.privacy.incognito = v)
         })
     };
+    inner
+        .synced
+        .borrow_mut()
+        .push((pause.clone(), |c| c.privacy.incognito));
     content.append(&card(&[
         row("Start Vaani when I log in", "", &s5),
         row(
@@ -1729,6 +1747,10 @@ fn build_ai(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.cleanup.ai_enabled = v)
         })
     };
+    inner
+        .synced
+        .borrow_mut()
+        .push((enabled.clone(), |c| c.cleanup.ai_enabled));
     let names: Vec<&str> = providers.iter().map(|p| p.name).collect();
     let provider = gtk4::DropDown::from_strings(&names);
     provider.set_selected(
@@ -1832,7 +1854,9 @@ fn build_ai(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     content.append(&card(&[
         row(
             "Polish dictations with AI",
-            "Skipped for dictations under four words, in terminals and in code editors.",
+            "Off by default. Adds about half a second to a second after you stop speaking. \
+             Skipped for dictations under four words, in terminals and in code editors. Also in the \
+             tray menu.",
             &enabled,
         ),
         row(
