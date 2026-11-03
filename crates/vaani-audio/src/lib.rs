@@ -230,6 +230,21 @@ impl Recording {
         resample(&mono, self.rate)
     }
 
+    /// The last `samples_16k` samples so far, at 16 kHz, without copying the whole recording.
+    /// The flag says whether earlier audio was left out.
+    pub fn peek_tail(&self, samples_16k: usize) -> Result<(Vec<f32>, bool), AudioError> {
+        let native = (samples_16k as u64 * u64::from(self.rate) / u64::from(TARGET_RATE)) as usize;
+        let (mono, cut) = self
+            .samples
+            .lock()
+            .map(|s| {
+                let from = s.len().saturating_sub(native);
+                (s[from..].to_vec(), from > 0)
+            })
+            .unwrap_or_default();
+        Ok((resample(&mono, self.rate)?, cut))
+    }
+
     /// Stop the mic and return 16 kHz mono audio.
     pub fn finish(self) -> Result<Vec<f32>, AudioError> {
         if let Some(s) = &self.stream {

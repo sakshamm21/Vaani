@@ -89,6 +89,8 @@ pub struct General {
     pub sounds: bool,
     /// Show the floating pill while dictating.
     pub overlay: bool,
+    /// Show the words above the pill while speaking, read by the local model.
+    pub live_preview: bool,
     /// Look of the settings window and pill.
     pub theme: Theme,
     /// The first-run setup page has been completed or skipped.
@@ -113,6 +115,7 @@ impl Default for General {
             autostart: true,
             sounds: true,
             overlay: true,
+            live_preview: true,
             theme: Theme::System,
             onboarded: false,
         }

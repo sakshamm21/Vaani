@@ -1410,6 +1410,12 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.general.overlay = v)
         })
     };
+    let live = {
+        let shared = shared.clone();
+        switch(cfg.general.live_preview, move |v| {
+            update_config(&shared, |c| c.general.live_preview = v)
+        })
+    };
     let pause = {
         let shared = shared.clone();
         switch(cfg.audio.pause_media, move |v| {
@@ -1431,6 +1437,11 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             "Floating pill",
             "Show a recording indicator at the bottom of the screen.",
             &s2,
+        ),
+        row(
+            "Show words while speaking",
+            "Shows what you say above the pill, read by the downloaded local model on this computer (not Whisper), even when a cloud service does the final text.",
+            &live,
         ),
     ]));
 

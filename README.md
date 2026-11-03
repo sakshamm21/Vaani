@@ -384,6 +384,7 @@ immediately.
 | Input device | The microphone to record from. |
 | Sounds | Short tones when recording starts and stops. |
 | Floating pill | The on-screen recording indicator. |
+| Show words while speaking | Shows the words above the pill as you speak, read on this computer by the downloaded local model (Parakeet, Moonshine or SenseVoice; not Whisper). With a cloud engine the local model only draws the preview and the cloud still writes the text. On by default. |
 | Remove filler words | Removes "um", "uh" and similar words. |
 | Add a space after each dictation | Separates consecutive dictations. |
 | Finish hands-free on silence | Never (default), or after 3, 5 or 10 seconds without speech. |
@@ -627,7 +628,6 @@ instance over D-Bus (`io.github.sakshamm21.Vaani`).
 
 ## Roadmap
 
-- Live preview while you speak (streaming recognition).
 - Flatpak and AppImage packages.
 - Windows.
 

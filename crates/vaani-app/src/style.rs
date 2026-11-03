@@ -118,6 +118,17 @@ window.vaani-overlay { background: transparent; }
   color: @v_fg; font-weight: 600; font-size: 13px; font-feature-settings: "tnum";
 }
 .vaani-pill label.dim { color: @v_muted; font-weight: 500; font-size: 12px; }
+.vaani-caption {
+  background-color: @v_pill_bg;
+  border: 1px solid @v_pill_border;
+  border-radius: 12px;
+  padding: 0 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+}
+.vaani-caption label {
+  font-family: "Inter", "Noto Sans", sans-serif;
+  color: @v_fg; font-weight: 500; font-size: 13px;
+}
 
 /* ---------- settings window ---------- */
 window.vaani-settings, window.vaani-settings * {

@@ -13,6 +13,7 @@ mod media;
 mod models_cmd;
 mod notify;
 mod overlay;
+mod preview;
 mod settings;
 mod sounds;
 mod style;

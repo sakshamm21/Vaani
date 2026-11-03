@@ -26,6 +26,12 @@ const W: i32 = 232;
 const H: i32 = 44;
 const BARS: usize = 22;
 const MARGIN_BOTTOM: i32 = 72;
+/// The live preview caption sits above the pill, in the same window, which is this wide
+/// and click-through so its empty parts never get in the way.
+const WIN_W: i32 = 480;
+const CAPTION_H: i32 = 34;
+const GAP: i32 = 8;
+const WIN_H: i32 = CAPTION_H + GAP + H;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
@@ -46,6 +52,8 @@ pub struct Overlay {
     window: gtk4::Window,
     label: gtk4::Label,
     hint: gtk4::Label,
+    caption: gtk4::Box,
+    caption_text: gtk4::Label,
     area: gtk4::DrawingArea,
     anim: Rc<RefCell<Anim>>,
     xconn: Option<Rc<RustConnection>>,
@@ -58,8 +66,8 @@ impl Overlay {
         let window = gtk4::Window::builder()
             .decorated(false)
             .resizable(false)
-            .default_width(W)
-            .default_height(H)
+            .default_width(WIN_W)
+            .default_height(WIN_H)
             .focusable(false)
             .can_focus(false)
             .css_classes(["vaani-overlay"])
@@ -80,7 +88,25 @@ impl Overlay {
         row.append(&area);
         row.append(&hint);
         row.append(&label);
-        window.set_child(Some(&row));
+        row.set_halign(gtk4::Align::Center);
+
+        let caption_text = gtk4::Label::new(None);
+        caption_text.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
+        caption_text.set_single_line_mode(true);
+        caption_text.set_max_width_chars(52);
+        let caption = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        caption.add_css_class("vaani-caption");
+        caption.set_size_request(-1, CAPTION_H);
+        caption.set_halign(gtk4::Align::Center);
+        caption.set_valign(gtk4::Align::End);
+        caption.append(&caption_text);
+        caption.set_opacity(0.0);
+
+        let column = gtk4::Box::new(gtk4::Orientation::Vertical, GAP);
+        column.set_size_request(WIN_W, WIN_H);
+        column.append(&caption);
+        column.append(&row);
+        window.set_child(Some(&column));
 
         let anim = Rc::new(RefCell::new(Anim {
             levels: VecDeque::from(vec![0.0; BARS]),
@@ -102,6 +128,8 @@ impl Overlay {
                     tracing::warn!("overlay: not an X11 surface; it may take focus");
                     return;
                 };
+                // Nothing in the overlay is clickable: let clicks through to the windows below.
+                surface.set_input_region(Some(&cairo::Region::create()));
                 let id = surface.xid() as u32;
                 xid.set(id);
                 if let Some(c) = &xconn {
@@ -125,6 +153,8 @@ impl Overlay {
             window,
             label,
             hint,
+            caption,
+            caption_text,
             area,
             anim,
             xconn,
@@ -179,6 +209,25 @@ impl Overlay {
                 a.levels.iter_mut().for_each(|l| *l = 0.0);
             }
             a.mode = mode;
+        }
+
+        // The words heard so far, while recording and until the final text is ready.
+        let words = match mode {
+            Mode::Recording | Mode::Processing => self
+                .shared
+                .preview
+                .lock()
+                .map(|p| p.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        if words.is_empty() {
+            self.caption.set_opacity(0.0);
+        } else {
+            if self.caption_text.text() != words {
+                self.caption_text.set_text(&words);
+            }
+            self.caption.set_opacity(1.0);
         }
 
         match mode {
@@ -278,8 +327,8 @@ fn place(c: &RustConnection, w: &gtk4::Window, id: u32) {
     }
     let (mx, my, mw, mh) = pointer_monitor(c, w);
     let scale = w.scale_factor().max(1);
-    let x = mx + (mw - W * scale) / 2;
-    let y = my + mh - (H + MARGIN_BOTTOM) * scale;
+    let x = mx + (mw - WIN_W * scale) / 2;
+    let y = my + mh - (WIN_H + MARGIN_BOTTOM) * scale;
     let _ = c.configure_window(
         id,
         &ConfigureWindowAux::new()

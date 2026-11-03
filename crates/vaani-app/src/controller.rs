@@ -20,6 +20,8 @@ use vaani_stt::SttEngine;
 use vaani_stt::cloud::CloudEngine;
 use vaani_stt::local::LocalEngine;
 
+use crate::preview::{self, Preview};
+
 /// A quick tap shorter than this starts hands-free dictation instead of push-to-talk.
 const TAP: Duration = Duration::from_millis(300);
 /// Clips shorter than this are treated as accidental presses.
@@ -147,6 +149,8 @@ pub struct Shared {
     pub hands_free: AtomicBool,
     /// Last finished dictation, for the overlay's brief "done" flash.
     pub last_text: Mutex<Option<(Instant, String)>>,
+    /// Live preview of the words being spoken (empty when there is none).
+    pub preview: Mutex<String>,
     pub config: Mutex<Config>,
 }
 
@@ -183,6 +187,11 @@ pub struct Controller {
     /// When the speaker was last heard, for the hands-free silence stop.
     last_voice: Option<Instant>,
     early: Early,
+    preview: Preview,
+    /// With a cloud engine, the local model that reads the live preview (loaded on first use).
+    preview_engine: EngineSlot,
+    /// When the last recording ended, to unload `preview_engine` after a while.
+    last_dictation: Instant,
     tx: Sender<Input>,
 }
 
@@ -194,6 +203,7 @@ pub fn new_shared(config: &Config) -> Arc<Shared> {
         recording_since: Mutex::new(None),
         hands_free: AtomicBool::new(false),
         last_text: Mutex::new(None),
+        preview: Mutex::new(String::new()),
         config: Mutex::new(config.clone()),
     })
 }
@@ -251,6 +261,9 @@ impl Controller {
             job_cancel: None,
             last_voice: None,
             early: Early::default(),
+            preview: Preview::default(),
+            preview_engine: Arc::new(Mutex::new(None)),
+            last_dictation: Instant::now(),
             tx,
         };
         // The portal hotkey can wait on a desktop dialog, so start loading the model first.
@@ -408,7 +421,7 @@ impl Controller {
     }
 
     fn run(&mut self, rx: Receiver<Input>) {
-        let ticker = tick(Duration::from_millis(250));
+        let ticker = tick(Duration::from_millis(100));
         loop {
             select! {
                 recv(rx) -> msg => match msg {
@@ -423,6 +436,7 @@ impl Controller {
     fn on_tick(&mut self) {
         self.check_silence();
         self.transcribe_early();
+        self.update_preview();
         if let Some(r) = &self.recording {
             if r.elapsed() > MAX_RECORDING {
                 tracing::info!(
@@ -490,6 +504,103 @@ impl Controller {
         self.early.pending = Some((cut, rx));
     }
 
+    /// The local model behind the live preview, if it can do one: the main engine when it is
+    /// local, else (cloud) the downloaded local model in its own worker. None turns it off.
+    fn preview_slot(&self) -> Option<EngineSlot> {
+        if !self.config.general.live_preview || !self.config.general.overlay {
+            return None;
+        }
+        let model = vaani_models::find(&self.config.engine.local_model)
+            .filter(|m| m.is_installed() && preview::supported(m.kind))?;
+        match self.config.engine.kind {
+            EngineKind::Local => Some(self.engine.clone()),
+            EngineKind::Cloud => {
+                let slot = self.preview_engine.clone();
+                // Load it in the background the first time; previews start once it is ready.
+                if slot.lock().is_ok_and(|s| s.is_none()) {
+                    let threads = vaani_models::default_threads() as u32;
+                    let loading = slot.clone();
+                    let _ = thread::Builder::new()
+                        .name("preview-load".into())
+                        .spawn(move || {
+                            let Ok(mut s) = loading.lock() else { return };
+                            if s.is_some() {
+                                return;
+                            }
+                            let mut e = LocalEngine::new(model, threads);
+                            match e.warm_up() {
+                                Ok(d) => {
+                                    tracing::info!(
+                                        ms = d.as_millis() as u64,
+                                        "preview model ready"
+                                    );
+                                    *s = Some(Box::new(e));
+                                }
+                                Err(err) => tracing::warn!("preview model failed to load: {err}"),
+                            }
+                        });
+                }
+                Some(slot)
+            }
+        }
+    }
+
+    /// While recording, read the last few seconds again and show the words above the pill.
+    fn update_preview(&mut self) {
+        let Some(rec) = &self.recording else {
+            // Free the cloud user's preview model when it has not been used for a while.
+            if self.last_dictation.elapsed() > preview::IDLE_UNLOAD {
+                if let Ok(mut s) = self.preview_engine.try_lock() {
+                    if s.take().is_some() {
+                        tracing::debug!("preview model unloaded");
+                    }
+                }
+            }
+            return;
+        };
+        if self.preview.collect() {
+            tracing::debug!(
+                took_ms = self.preview.last_took.as_millis() as u64,
+                chars = self.preview.text.len(),
+                "preview updated"
+            );
+            if let Ok(mut p) = self.shared.preview.lock() {
+                p.clone_from(&self.preview.text);
+            }
+        }
+        // With a local engine the preview shares its model with the final pass, so leave it
+        // idle more of the time: the key may be released at any moment.
+        let shares_model = self.config.engine.kind == EngineKind::Local;
+        if !self.preview.due(shares_model) || rec.elapsed() < Duration::from_millis(500) {
+            return;
+        }
+        let Some(slot) = self.preview_slot() else {
+            return;
+        };
+        let Ok((audio, cut)) = rec.peek_tail(preview::WINDOW) else {
+            return;
+        };
+        let language = self.config.general.language.clone();
+        let shared = self.shared.clone();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let _ = thread::Builder::new()
+            .name("preview".into())
+            .spawn(move || {
+                // try_lock: the final pass and early pieces always come first, and a key released
+                // meanwhile means the final pass needs the model now.
+                let text = slot.try_lock().ok().and_then(|mut s| {
+                    if shared.state() != State::Recording {
+                        return None;
+                    }
+                    s.as_mut()
+                        .and_then(|e| e.transcribe(&audio, &language).ok())
+                        .map(|t| t.text)
+                });
+                let _ = tx.send(text);
+            });
+        self.preview.started(cut, rx);
+    }
+
     /// Hands-free only: finish once the speaker has been quiet for the configured time.
     fn check_silence(&mut self) {
         let secs = self.config.audio.silence_stop_secs;
@@ -537,6 +648,13 @@ impl Controller {
         let key_changed = new.hotkey.key != self.config.hotkey.key
             || new.hotkey.command_key != self.config.hotkey.command_key;
         let engine_changed = new.engine != self.config.engine;
+        if new.engine.local_model != self.config.engine.local_model
+            || new.engine.kind != EngineKind::Cloud
+            || !new.general.live_preview
+        {
+            // A model still loading finishes into the old slot and is dropped with it.
+            self.preview_engine = Arc::new(Mutex::new(None));
+        }
         self.config = new;
         if let Ok(mut c) = self.shared.config.lock() {
             *c = self.config.clone();
@@ -614,6 +732,7 @@ impl Controller {
                 Ok(r) => {
                     self.recording = Some(r);
                     self.last_voice = None;
+                    self.reset_preview();
                     self.warm_engine();
                     if self.config.audio.pause_media {
                         crate::media::pause();
@@ -655,6 +774,7 @@ impl Controller {
                     r.discard();
                 }
                 self.early = Early::default();
+                self.reset_preview();
                 self.command_mode = false;
                 tracing::info!("dictation cancelled");
             }
@@ -669,7 +789,15 @@ impl Controller {
         self.set_state();
     }
 
+    fn reset_preview(&mut self) {
+        self.preview = Preview::default();
+        if let Ok(mut p) = self.shared.preview.lock() {
+            p.clear();
+        }
+    }
+
     fn clear_recording_flags(&mut self) {
+        self.last_dictation = Instant::now();
         self.latched = false;
         self.down_at = None;
         self.shared.hands_free.store(false, Ordering::Relaxed);
