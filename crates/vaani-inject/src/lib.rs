@@ -218,6 +218,8 @@ struct Service {
     owned: bool,
     max_prop: usize,
     keys: Keys,
+    /// What we serve as the PRIMARY selection, while we own it (Wayland, unknown app).
+    primary: Option<Offer>,
 }
 
 const TERMINALS: &[&str] = &[
@@ -336,6 +338,7 @@ impl Service {
             owned: false,
             max_prop,
             keys,
+            primary: None,
         })
     }
 
@@ -394,6 +397,7 @@ impl Service {
                 self.owned = false;
                 self.offer.clear();
             }
+            Event::SelectionClear(c) if c.selection == self.a.primary => self.primary = None,
             _ => {}
         }
     }
@@ -416,6 +420,30 @@ impl Service {
             o.insert(t, (ty, bytes.clone()));
         }
         o
+    }
+
+    /// Put back the primary selection saved before a blind paste (its text only).
+    fn restore_primary(&mut self, saved: Option<String>) -> Result<(), InjectError> {
+        match saved {
+            None => Ok(()),
+            Some(old) if old.is_empty() => self.own_primary(None),
+            Some(old) => self.own_primary(Some(self.text_offer(&old))),
+        }
+    }
+
+    /// Serve `offer` as the PRIMARY selection, or give PRIMARY up with None.
+    fn own_primary(&mut self, offer: Option<Offer>) -> Result<(), InjectError> {
+        let owner = if offer.is_some() {
+            self.win
+        } else {
+            x11rb::NONE
+        };
+        self.primary = offer;
+        self.conn
+            .set_selection_owner(owner, self.a.primary, CURRENT_TIME)
+            .map_err(x)?;
+        self.conn.flush().map_err(x)?;
+        Ok(())
     }
 
     fn own(&mut self, offer: Offer) -> Result<(), InjectError> {
@@ -453,19 +481,34 @@ impl Service {
         //    editors such as Nextpad++, Wine apps) prefetch the clipboard the instant its owner
         //    changes and paste from that cache, so a Ctrl+V sent within a millisecond pastes
         //    nothing. 40 ms is invisible to the user and leaves a wide margin (10 ms was enough).
+        // On Wayland, Vaani can't tell which app has focus unless it runs through XWayland.
+        // Terminals don't paste on Ctrl+V, so for an unknown app put the text on the primary
+        // selection too and press Shift+Insert, which pastes in terminals and other apps alike.
+        let blind = self.keys.is_uinput() && app.is_empty();
+        let saved_primary = if blind {
+            let old = match self.fetch_from(self.a.primary, self.a.utf8) {
+                Ok(Some((_, bytes, 8))) => String::from_utf8_lossy(&bytes).into_owned(),
+                _ => String::new(),
+            };
+            self.own_primary(Some(self.text_offer(text)))?;
+            Some(old)
+        } else {
+            None
+        };
         self.own(self.text_offer(text))?;
         let mut prefetched = false;
         self.serve_for(Duration::from_millis(40), &mut prefetched)?;
         self.wait_modifiers_released();
         let started = Instant::now();
-        let mut read_at = self.paste_and_wait(terminal, &app, Duration::from_millis(1500))?;
+        let mut read_at =
+            self.paste_and_wait(terminal, blind, &app, Duration::from_millis(1500))?;
 
         // An app that has only just opened can drop the first paste key while its text box is
         // still taking focus. Try once more once focus has settled: a paste lands whole or not
         // at all, while typed keys sent too early lose the start of the text.
         if read_at.is_none() && !prefetched && self.owned && mode == Mode::Auto {
             self.wait_focus_settled();
-            read_at = self.paste_and_wait(terminal, &app, Duration::from_millis(700))?;
+            read_at = self.paste_and_wait(terminal, blind, &app, Duration::from_millis(700))?;
         }
 
         let read_at = match read_at {
@@ -483,6 +526,7 @@ impl Service {
                 self.wait_focus_settled();
                 let typed = self.type_text(text);
                 self.restore(saved)?;
+                self.restore_primary(saved_primary)?;
                 return match typed {
                     Ok(chars) => Ok(Outcome::Typed { app, chars }),
                     Err(e) => {
@@ -502,6 +546,7 @@ impl Service {
 
         // 4. Put the old clipboard back.
         self.restore(saved)?;
+        self.restore_primary(saved_primary)?;
         Ok(Outcome::Pasted {
             after,
             terminal,
@@ -629,6 +674,9 @@ impl Service {
                         *read = true;
                     }
                 }
+                Some(Event::SelectionClear(c)) if c.selection == self.a.primary => {
+                    self.primary = None;
+                }
                 Some(Event::SelectionClear(_)) => self.owned = false,
                 Some(_) => {}
                 None => thread::sleep(Duration::from_millis(1)),
@@ -645,10 +693,11 @@ impl Service {
     fn paste_and_wait(
         &mut self,
         terminal: bool,
+        blind: bool,
         app: &str,
         limit: Duration,
     ) -> Result<Option<Instant>, InjectError> {
-        self.send_paste(terminal)?;
+        self.send_paste(terminal, blind)?;
         tracing::debug!(%app, terminal, "paste key sent");
         let deadline = Instant::now() + limit;
         let mut read_at: Option<Instant> = None;
@@ -669,6 +718,9 @@ impl Service {
                     if served && req.target != self.a.targets && req.target != self.a.timestamp {
                         read_at.get_or_insert_with(Instant::now);
                     }
+                }
+                Some(Event::SelectionClear(c)) if c.selection == self.a.primary => {
+                    self.primary = None;
                 }
                 Some(Event::SelectionClear(_)) => {
                     // Someone copied during the paste; leave their content alone.
@@ -772,12 +824,18 @@ impl Service {
         self.keys.key(&self.conn, self.root, code, down)
     }
 
-    fn send_paste(&mut self, terminal: bool) -> Result<(), InjectError> {
-        let mut keys = vec![self.keycode(0xffe3)?]; // Control_L
-        if terminal {
-            keys.push(self.keycode(0xffe1)?); // Shift_L
-        }
-        keys.push(self.keycode(0x76)?); // v
+    fn send_paste(&mut self, terminal: bool, blind: bool) -> Result<(), InjectError> {
+        let keys = if blind {
+            vec![self.keycode(0xffe1)?, self.keycode(0xff63)?] // Shift_L, Insert
+        } else if terminal {
+            vec![
+                self.keycode(0xffe3)?,
+                self.keycode(0xffe1)?,
+                self.keycode(0x76)?,
+            ] // Ctrl+Shift+V
+        } else {
+            vec![self.keycode(0xffe3)?, self.keycode(0x76)?] // Ctrl+V
+        };
         for &k in &keys {
             self.key(k, true)?;
         }
@@ -794,11 +852,16 @@ impl Service {
         } else {
             req.property
         };
-        let ok = if req.selection != self.a.clipboard || !self.owned {
-            false
-        } else if req.target == self.a.targets {
+        let offer = if req.selection == self.a.clipboard && self.owned {
+            Some(&self.offer)
+        } else if req.selection == self.a.primary {
+            self.primary.as_ref()
+        } else {
+            None
+        };
+        let ok = if let Some(offer) = offer.filter(|_| req.target == self.a.targets) {
             let mut list = vec![self.a.targets, self.a.timestamp];
-            list.extend(self.offer.keys().copied());
+            list.extend(offer.keys().copied());
             self.conn
                 .change_property32(
                     PropMode::REPLACE,
@@ -809,7 +872,7 @@ impl Service {
                 )
                 .map_err(x)?;
             true
-        } else if let Some((ty, data)) = self.offer.get(&req.target) {
+        } else if let Some((ty, data)) = offer.and_then(|o| o.get(&req.target)) {
             if data.len() > self.max_prop {
                 false // would need INCR; rare for text, skipped
             } else {

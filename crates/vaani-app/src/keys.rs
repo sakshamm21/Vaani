@@ -13,6 +13,12 @@ pub fn app_icon() -> &'static str {
     }
 }
 
+/// The dictation shortcut to show: the desktop's own when it manages it (Wayland portal),
+/// otherwise the configured key.
+pub fn shortcut(key: &str) -> String {
+    vaani_hotkey::portal_trigger().unwrap_or_else(|| pretty(key))
+}
+
 /// "RightCtrl" -> "Right Ctrl".
 pub fn pretty(key: &str) -> String {
     let mut out = String::new();

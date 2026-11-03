@@ -44,6 +44,11 @@ impl Keys {
 
     /// Whether characters missing from the layout can be typed (XTest remaps a spare key;
     /// a uinput keyboard can't change the compositor's keymap).
+    /// Keys go through the virtual keyboard (a Wayland session).
+    pub(crate) fn is_uinput(&self) -> bool {
+        !matches!(self, Self::XTest)
+    }
+
     pub(crate) fn can_remap(&self) -> bool {
         matches!(self, Self::XTest)
     }

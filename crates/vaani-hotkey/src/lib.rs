@@ -215,6 +215,11 @@ pub fn backend() -> Backend {
     }
 }
 
+/// The dictation shortcut as the desktop shows it, when the portal backend is in use.
+pub fn portal_trigger() -> Option<String> {
+    portal::trigger()
+}
+
 /// Whether the GlobalShortcuts portal answers (for `vaani doctor`).
 pub fn portal_available() -> bool {
     portal::available()

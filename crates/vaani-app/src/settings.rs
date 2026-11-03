@@ -17,7 +17,7 @@ use vaani_core::config::{Config, EngineKind, HotkeyMode, Theme};
 use vaani_models::ModelInfo;
 
 use crate::controller::{EngineStatus, Input, Shared};
-use crate::keys::pretty;
+use crate::keys::{pretty, shortcut};
 
 const LANGUAGES: &[(&str, &str)] = &[
     ("auto", "Detect automatically"),
@@ -429,7 +429,8 @@ impl Settings {
                 update_config(&i.shared, |c| c.hotkey.key = name.to_string());
             }
             self.refresh_home();
-            i.key_label.set_text(&pretty(&config(&i.shared).hotkey.key));
+            i.key_label
+                .set_text(&shortcut(&config(&i.shared).hotkey.key));
         }
         // Downloads.
         let mut finished = Vec::new();
@@ -569,7 +570,7 @@ impl Settings {
                 su.finish.add_css_class("suggested-action");
             }
         }
-        let key = pretty(&cfg.hotkey.key);
+        let key = shortcut(&cfg.hotkey.key);
         if su.key != key {
             su.key = key.clone();
             su.checks[0].1.set_text(&format!("Hold {key} for a moment"));
@@ -591,7 +592,7 @@ impl Settings {
     fn refresh_home(&self) {
         let i = &self.inner;
         let cfg = config(&i.shared);
-        let key = pretty(&cfg.hotkey.key);
+        let key = shortcut(&cfg.hotkey.key);
         let downloading = i.downloads.borrow().contains_key(&cfg.engine.local_model);
         i.hero_progress.set_visible(downloading);
         i.hero_action.set_visible(false);
@@ -1117,7 +1118,7 @@ fn build_setup(inner: &Rc<Inner>) -> Setup {
         "Get a speech engine ready, then run three quick checks. It takes about a minute.",
     );
     let cfg = config(&inner.shared);
-    let key = pretty(&cfg.hotkey.key);
+    let key = shortcut(&cfg.hotkey.key);
 
     group(&content, "Speech Engine");
     let engine_icon = gtk4::Image::new();
@@ -1283,7 +1284,7 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
 
     group(&content, "Shortcut");
     let keybox = gtk4::Box::new(Orientation::Horizontal, 8);
-    inner.key_label.set_text(&pretty(&cfg.hotkey.key));
+    inner.key_label.set_text(&shortcut(&cfg.hotkey.key));
     keybox.append(&inner.key_label);
     {
         let weak = Rc::downgrade(inner);

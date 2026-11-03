@@ -18,8 +18,41 @@ use futures_util::StreamExt;
 
 use crate::{HotkeyError, HotkeyEvent, Listener, Watch, keysym_for};
 
+const APP_ID: &str = "io.github.sakshamm21.Vaani";
 const ID: &str = "dictate";
 const COMMAND_ID: &str = "command";
+
+/// The dictation shortcut the desktop settled on, for showing in Settings.
+static TRIGGER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn trigger() -> Option<String> {
+    TRIGGER.lock().ok().and_then(|t| t.clone())
+}
+
+/// "Press <Control><Alt>space" -> "Ctrl+Alt+Space".
+fn readable(desc: &str) -> String {
+    let d = desc.trim().strip_prefix("Press ").unwrap_or(desc.trim());
+    let mut out = String::new();
+    let mut rest = d;
+    while let Some(r) = rest.strip_prefix('<') {
+        let Some((m, after)) = r.split_once('>') else {
+            break;
+        };
+        out.push_str(match m {
+            "Control" | "Primary" | "Ctrl" => "Ctrl",
+            "Super" | "Meta" => "Super",
+            other => other,
+        });
+        out.push('+');
+        rest = after;
+    }
+    let mut key = rest.chars();
+    if let Some(first) = key.next() {
+        out.extend(first.to_uppercase());
+        out.push_str(key.as_str());
+    }
+    out
+}
 
 /// The trigger we suggest, in the XDG shortcuts format.
 fn preferred_trigger(key: &str) -> String {
@@ -75,6 +108,13 @@ async fn run(
 ) {
     let p = |e: ashpd::Error| HotkeyError::Portal(e.to_string());
     let setup = async {
+        // Newer portals want unsandboxed apps to say who they are first; older ones don't
+        // have the registry, which is fine.
+        if let Ok(id) = ashpd::AppID::try_from(APP_ID) {
+            if let Err(e) = ashpd::register_host_app(id).await {
+                tracing::debug!("portal registry: {e}");
+            }
+        }
         let portal = GlobalShortcuts::new().await.map_err(p)?;
         let session = portal.create_session(Default::default()).await.map_err(p)?;
         let shortcut = NewShortcut::new(ID, "Dictate (hold to talk)")
@@ -99,6 +139,11 @@ async fn run(
                 trigger = s.trigger_description(),
                 "hotkey set (portal)"
             );
+            if s.id() == ID {
+                if let Ok(mut t) = TRIGGER.lock() {
+                    *t = Some(readable(s.trigger_description()));
+                }
+            }
         }
         let down = portal.receive_activated().await.map_err(p)?;
         let up = portal.receive_deactivated().await.map_err(p)?;
@@ -160,6 +205,13 @@ pub fn available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readable_triggers() {
+        assert_eq!(readable("Press <Control><Alt>space"), "Ctrl+Alt+Space");
+        assert_eq!(readable("F9"), "F9");
+        assert_eq!(readable("Ctrl+Alt+Space"), "Ctrl+Alt+Space");
+    }
 
     #[test]
     fn modifiers_become_a_combo() {
