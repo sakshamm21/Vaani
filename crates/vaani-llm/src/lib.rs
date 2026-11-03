@@ -482,6 +482,21 @@ pub fn accept(input: &str, output: &str) -> Result<String, LlmError> {
     if upper(out) > 0.6 && upper(input) < 0.3 {
         return Err(LlmError::Rejected("changed to capitals"));
     }
+    // Models often leave the question mark off a one-sentence question they otherwise kept.
+    // When the reply still opens with the question word, put it back.
+    let fixed;
+    let out = if is_question(&input_lower)
+        && !out.contains('?')
+        && !out.trim_end_matches(['.', '!']).contains(['.', '!'])
+        && dst
+            .first()
+            .is_some_and(|w| QUESTION_WORDS.contains(&w.as_str()))
+    {
+        fixed = format!("{}?", out.trim_end_matches(['.', '!']).trim_end());
+        fixed.as_str()
+    } else {
+        out
+    };
     // The same words with new punctuation can't be an answer.
     if src == dst {
         return Ok(out.to_string());
@@ -538,10 +553,27 @@ mod tests {
             "the total is fifty no sixty thousand rupees",
             "The total is sixty thousand rupees."
         ));
-        // Punctuation only, even when the model leaves off the question mark.
-        assert!(ok(
+        // A question keeps its question mark even when the model drops it.
+        assert_eq!(
+            accept(
+                "what is the capital of france",
+                "What is the capital of France."
+            )
+            .unwrap(),
+            "What is the capital of France?"
+        );
+        assert_eq!(
+            accept(
+                "can we meet at three actually four tomorrow",
+                "Can we meet at four tomorrow"
+            )
+            .unwrap(),
+            "Can we meet at four tomorrow?"
+        );
+        // An answer that starts differently is still refused.
+        assert!(!ok(
             "what is the capital of france",
-            "What is the capital of France."
+            "The capital of France is Paris."
         ));
         assert!(ok(
             "um so lets meet at 3 actually 4 tomorrow",
