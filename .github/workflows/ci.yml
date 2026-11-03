@@ -19,6 +19,9 @@ jobs:
       - name: System packages
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-4-dev
       - uses: Swatinem/rust-cache@v2
+      - name: Drop a partly restored sherpa-onnx download
+        # The cache can bring back its folder without the library inside, which breaks linking.
+        run: find target -maxdepth 2 -name sherpa-onnx-prebuilt -prune -exec rm -rf {} + || true
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy

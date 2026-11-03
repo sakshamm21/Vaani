@@ -39,10 +39,12 @@
 | --- | --- |
 | **Works in every app** | Text goes into whatever has focus. Tested in Firefox, Chrome, LibreOffice Writer, Xed, Nextpad++, GNOME Terminal, Xfce Terminal and Wine Notepad. |
 | **Private by default** | Twelve local speech models through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): Parakeet, Whisper, Moonshine and SenseVoice. No account, no telemetry. |
-| **Fast cloud option** | Bring your own key for Groq, OpenAI or any OpenAI-compatible server. Keys live in your system keyring. |
+| **Fast cloud option** | Bring your own key for Groq, OpenAI, Deepgram, ElevenLabs, AssemblyAI, Sarvam or any OpenAI-compatible server. Keys live in your system keyring. |
 | **Never loses a word** | If the model is still loading, Vaani waits for it. If an app ignores the paste, the text is typed instead. If the cloud is unreachable, an installed local model takes over. |
 | **AI clean-up (optional)** | A language model fixes punctuation, repeated words and self-corrections ("at 3, actually 4" becomes "at 4"). Groq, OpenAI, Anthropic, Ollama or any compatible server. Off by default. |
 | **Spoken commands** | Say "new line", "full stop" or "scratch that". Save snippets and word replacements in the Dictionary. |
+| **Command mode** | Select text, hold the command key and say "make this more formal" or "turn this into a list". The selection is rewritten in place. |
+| **Per-app rules** | A casual tone in Slack, a formal one in your mail client, no AI clean-up in your editor. |
 | **Two ways to talk** | Hold the key to talk, or tap once for hands-free and tap again to finish. Esc cancels. |
 | **Light and dark** | Follows your desktop theme, or set it yourself from the title bar. |
 | **Lightweight** | Native GTK 4, no browser engine. The app uses 115 MB of memory and 0% CPU when idle; the default model adds 850 MB. |
@@ -60,7 +62,7 @@ flowchart LR
     K([Hold Right Ctrl]) --> M[Microphone<br/>16 kHz audio]
     M --> E{Speech engine}
     E -->|default| L[Local model<br/>sherpa-onnx worker]
-    E -->|optional| C[Cloud API<br/>Groq / OpenAI]
+    E -->|optional| C[Cloud API<br/>your own key]
     L --> T[Clean-up<br/>spacing, fillers]
     C --> T
     T --> H[(History)]
@@ -246,6 +248,40 @@ extra instruction such as "British spelling", and the full prompt, and has a but
 on a sample sentence. If the model does not reply within the time limit (2.5 seconds by
 default), the dictation is inserted as transcribed.
 
+### Command mode
+
+Pick a **Command key** under **General** (for example Right Alt). Select some text, hold the
+command key and say what to do with it: "make this more formal", "fix the grammar", "translate
+this to Hindi", "turn this into a bulleted list". The AI clean-up provider rewrites the
+selection and Vaani pastes the result over it. With nothing selected, it writes what you ask
+for ("write a short thank-you note to Priya"). Command mode works even when AI clean-up of
+ordinary dictations is off, but it needs a provider and key set on the **AI Clean-up** page.
+`vaani command` does the same from a shortcut of your own.
+
+### Per-app rules
+
+Add an `[[apps]]` entry to `~/.config/vaani/config.toml` for each app that should behave
+differently. `app` is matched against the window's app id, ignoring case:
+
+```toml
+[[apps]]
+app = "slack"
+style = "casual"        # clean, formal, casual, or "off" for no AI clean-up
+
+[[apps]]
+app = "thunderbird"
+style = "formal"
+
+[[apps]]
+app = "code"
+style = "off"
+insert = "type"         # auto, paste or type
+trailing_space = false
+```
+
+The app id is the window class or Wayland app id, such as `firefox` or `org.gnome.TextEditor`.
+Vaani's log (see [Troubleshooting](#troubleshooting)) names the app for each dictation.
+
 ## Settings
 
 Open the settings window from the tray icon or the application menu. Changes are saved
@@ -277,6 +313,7 @@ immediately.
 | Theme | Light, dark, or follow the desktop. Also available from the button in the title bar. |
 | Dictation key | Click **Change…** and press the key to use. Supported keys: Right Ctrl, Right Alt, Right Shift, Right Super, Left Ctrl, Left Alt, Super, Menu, Insert, Pause, Scroll Lock and F1 to F12. |
 | How the key works | *Hold to talk* (tap for hands-free) or *Press to start, press to stop*. |
+| Command key | Off by default. Hold it to change the selected text by voice; see [Command mode](#command-mode). |
 | Input device | The microphone to record from. |
 | Sounds | Short tones when recording starts and stops. |
 | Floating pill | The on-screen recording indicator. |
@@ -288,7 +325,8 @@ immediately.
 | History | How many dictations to keep: none, the last 20 (default), 100 or 1,000, or all. Older entries are deleted automatically. |
 | Pause history | New dictations are not saved while this is on. Also in the tray menu. |
 
-**Speech Model** chooses between local and cloud recognition, sets the language, and manages
+**Speech Model** chooses between local and cloud recognition, sets the language, chooses
+whether Hindi is written in Devanagari or in Latin letters ("aap kaise ho"), and manages
 downloaded models. **Keep everything on this computer** turns cloud recognition off
 entirely, so audio never leaves the machine.
 
@@ -344,6 +382,10 @@ or leave it on automatic detection. Parakeet detects its supported languages aut
 | --- | --- | --- |
 | Groq | `whisper-large-v3-turbo` | [console.groq.com/keys](https://console.groq.com/keys) (free tier available) |
 | OpenAI | `gpt-4o-mini-transcribe` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| Deepgram | `nova-3` | [console.deepgram.com](https://console.deepgram.com/) |
+| ElevenLabs | `scribe_v1` | [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys) |
+| AssemblyAI | `universal` | [assemblyai.com/app/api-keys](https://www.assemblyai.com/app/api-keys). Slower: the audio is uploaded, then transcribed. |
+| Sarvam | `saarika:v2.5` | [dashboard.sarvam.ai](https://dashboard.sarvam.ai/). Hindi and other Indian languages. |
 | OpenAI-compatible | set by you | Any server implementing `/v1/audio/transcriptions`, for example a local faster-whisper or whisper.cpp server |
 
 To use a cloud provider:
@@ -365,6 +407,7 @@ only while a cloud engine is selected.
 | `vaani start`, `vaani stop`, `vaani cancel` | Control a dictation. |
 | `vaani status` | Print the current state and engine. |
 | `vaani paste-last` | Insert the most recent dictation again. |
+| `vaani command` | Start or finish a command-mode dictation for the selected text. |
 | `vaani models` | List models and whether they are installed. |
 | `vaani models download <id> [--use]` | Download a model, and optionally make it active. |
 | `vaani models remove <id>` | Delete a downloaded model. |
@@ -516,9 +559,9 @@ instance over D-Bus (`io.github.sakshamm21.Vaani`).
 
 ## Roadmap
 
-- Wayland support (GNOME, KDE Plasma, Hyprland, Sway).
-- More cloud providers.
+- Live preview while you speak (streaming recognition).
 - Flatpak and AppImage packages.
+- Windows.
 
 ## License
 
