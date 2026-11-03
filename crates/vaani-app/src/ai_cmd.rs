@@ -58,10 +58,9 @@ pub fn run(text: Option<String>, file: Option<PathBuf>, models: bool) -> Result<
             .collect(),
         (None, None) => bail!("give some text, or --file"),
     };
-    let (mut applied, mut rejected) = (0, 0);
+    let (mut applied, mut same, mut rejected) = (0, 0, 0);
     for line in &lines {
-        let t = Instant::now();
-        let ms = || t.elapsed().as_millis();
+        let mut t = Instant::now();
         // Free tiers allow a few requests a minute; wait out the limit instead of skipping lines.
         let mut result = vaani_llm::clean(line, &req);
         for _ in 0..5 {
@@ -69,21 +68,28 @@ pub fn run(text: Option<String>, file: Option<PathBuf>, models: bool) -> Result<
                 break;
             };
             std::thread::sleep(hint.unwrap_or(Duration::from_secs(5)) + Duration::from_millis(250));
+            // Time only the request that answered, not the wait.
+            t = Instant::now();
             result = vaani_llm::clean(line, &req);
         }
+        let ms = t.elapsed().as_millis();
         match result {
+            Ok(out) if out == *line => {
+                same += 1;
+                println!("IN   {line}\nSAME ({ms} ms)\n");
+            }
             Ok(out) => {
                 applied += 1;
-                println!("IN   {line}\nOUT  {out}  ({} ms)\n", ms());
+                println!("IN   {line}\nOUT  {out}  ({ms} ms)\n");
             }
             Err(e) => {
                 rejected += 1;
-                println!("IN   {line}\nKEPT ({e}, {} ms)\n", ms());
+                println!("IN   {line}\nKEPT ({e}, {ms} ms)\n");
             }
         }
     }
     if lines.len() > 1 {
-        println!("{applied} cleaned, {rejected} kept as transcribed");
+        println!("{applied} cleaned, {same} returned unchanged, {rejected} kept as transcribed");
     }
     Ok(ExitCode::SUCCESS)
 }

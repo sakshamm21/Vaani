@@ -15,7 +15,7 @@ use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
 /// Bump this when a change to the schema needs a migration, and add a step to [`migrate`].
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -236,7 +236,7 @@ impl Default for Cleanup {
     fn default() -> Self {
         Self {
             ai_enabled: false,
-            ai_timeout_ms: 1500,
+            ai_timeout_ms: 2500,
             remove_fillers: true,
             ai_provider: "groq".into(),
             ai_model: String::new(),
@@ -497,7 +497,16 @@ fn migrate(table: &mut toml::Table, path: &Path) -> Result<bool, ConfigError> {
     let mut version = found;
     while version < CURRENT_VERSION {
         // One step per version. Version 0 is a hand-written file with no `version` key and
-        // needs nothing else. Future steps go here, e.g. `if version == 1 { rename a key }`.
+        // needs nothing else.
+        if version == 1 {
+            // The AI clean-up time limit went from 1.5 s to 2.5 s with the move to a reasoning
+            // model. The app never offered a way to change it, so 1500 is the old default.
+            if let Some(toml::Value::Table(c)) = table.get_mut("cleanup") {
+                if c.get("ai_timeout_ms").and_then(toml::Value::as_integer) == Some(1500) {
+                    c.insert("ai_timeout_ms".into(), toml::Value::Integer(2500));
+                }
+            }
+        }
         version += 1;
     }
     if version != found {
@@ -669,7 +678,17 @@ mod tests {
         let c = Config::load(&path).unwrap();
         assert!(c.general.autostart);
         let on_disk = fs::read_to_string(&path).unwrap();
-        assert!(on_disk.contains("version = 1"));
+        assert!(on_disk.contains("version = 2"));
+    }
+
+    #[test]
+    fn raises_old_default_clean_up_time_limit() {
+        let p = Path::new("config.toml");
+        let (c, _) =
+            Config::from_toml("version = 1\n[cleanup]\nai_timeout_ms = 1500\n", p).unwrap();
+        assert_eq!(c.cleanup.ai_timeout_ms, 2500);
+        let (c, _) = Config::from_toml("version = 1\n[cleanup]\nai_timeout_ms = 900\n", p).unwrap();
+        assert_eq!(c.cleanup.ai_timeout_ms, 900);
     }
 
     #[test]

@@ -243,7 +243,7 @@ inserts what you said. It is skipped in terminals and code editors.
 
 The **AI Clean-up** page sets the provider, key, model, tone (clean, formal or casual), an
 extra instruction such as "British spelling", and the full prompt, and has a button to test it
-on a sample sentence. If the model does not reply within the time limit (1.5 seconds by
+on a sample sentence. If the model does not reply within the time limit (2.5 seconds by
 default), the dictation is inserted as transcribed.
 
 ## Settings
