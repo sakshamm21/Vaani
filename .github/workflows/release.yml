@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    # The oldest supported Ubuntu, so the binaries also run on Mint 21 and Debian 12.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-4-dev clang cmake
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the tag matches the version
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME but Cargo.toml says $v"; exit 1; }
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Package
+        run: ./scripts/package.sh
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/*.tar.gz dist/SHA256SUMS \
+            --title "Vaani ${GITHUB_REF_NAME#v}" --generate-notes --draft
