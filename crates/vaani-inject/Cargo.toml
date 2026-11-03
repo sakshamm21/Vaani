@@ -16,6 +16,7 @@ tracing.workspace = true
 crossbeam-channel.workspace = true
 evdev.workspace = true
 wayland-client.workspace = true
+wayland-protocols.workspace = true
 wayland-protocols-wlr.workspace = true
 xkbcommon.workspace = true
 serde_json.workspace = true

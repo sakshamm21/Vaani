@@ -99,10 +99,21 @@ impl Injector {
         thread::Builder::new()
             .name("inject".into())
             .spawn(move || {
-                if wayland_session() && wayland::available() {
-                    match wayland::Service::new() {
+                // The standard protocol first; the wlr one for compositors that predate it.
+                if wayland_session() && wayland::ext::available() {
+                    match wayland::ext::Service::new() {
                         Ok(mut s) => {
-                            tracing::info!("text insertion: Wayland data-control and uinput");
+                            tracing::info!("text insertion: Wayland data-control (ext) and uinput");
+                            let _ = ready_tx.send(Ok(()));
+                            return s.run(rx, wake_rx);
+                        }
+                        Err(e) => tracing::warn!("ext data-control unusable: {e}"),
+                    }
+                }
+                if wayland_session() && wayland::wlr::available() {
+                    match wayland::wlr::Service::new() {
+                        Ok(mut s) => {
+                            tracing::info!("text insertion: Wayland data-control (wlr) and uinput");
                             let _ = ready_tx.send(Ok(()));
                             return s.run(rx, wake_rx);
                         }
@@ -248,7 +259,7 @@ const TERMINALS: &[&str] = &[
     "cool-retro-term",
 ];
 
-/// Whether the compositor offers the wlr data-control clipboard (for `vaani doctor`).
+/// Whether the compositor offers a data-control clipboard (for `vaani doctor`).
 pub fn wayland_clipboard() -> bool {
     wayland_session() && wayland::available()
 }

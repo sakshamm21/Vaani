@@ -99,7 +99,7 @@ your previous clipboard is restored afterwards.
 | --- | --- |
 | Display server | X11 (Xorg) or Wayland. See [Wayland](#wayland) for what differs. |
 | Distributions | Packages for Debian 12, Ubuntu 22.04 or later, Linux Mint 21 or later, Pop!_OS, Fedora, openSUSE Tumbleweed and Leap 15.6, and Arch. Elsewhere, use the tarball or build from source. |
-| Desktop | Any desktop. Developed on Cinnamon (Linux Mint 22.3), tested on GNOME 50 (Ubuntu 26.04) and sway. A system tray is optional. |
+| Desktop | Any desktop. Developed on Cinnamon (Linux Mint 22.3), tested on GNOME 50 (Ubuntu 26.04), KDE Plasma 6, Hyprland and sway. A system tray is optional. |
 | Memory | 1 GB free with the default model (Parakeet v3). Smaller models use less. With a cloud engine, 115 MB. |
 | Disk | 46 MB for the app, plus 100 MB to 1.9 GB per model. Building from source needs 2 GB more. |
 | Other | A microphone, and an internet connection for the first model download. |
@@ -110,19 +110,19 @@ To check your session type, run `echo $XDG_SESSION_TYPE`. It prints `x11` or `wa
 
 ### From a release package
 
-Download `vaani_0.3.0_amd64.deb` from the [latest release](https://github.com/sakshamm21/Vaani/releases/latest)
+Download `vaani_0.4.0_amd64.deb` from the [latest release](https://github.com/sakshamm21/Vaani/releases/latest)
 and install it:
 
 ```sh
-sudo apt install ./vaani_0.3.0_amd64.deb
+sudo apt install ./vaani_0.4.0_amd64.deb
 vaani settings
 ```
 
-On Fedora and openSUSE, download `vaani-0.3.0-1.x86_64.rpm` and install it:
+On Fedora and openSUSE, download `vaani-0.4.0-1.x86_64.rpm` and install it:
 
 ```sh
-sudo dnf install ./vaani-0.3.0-1.x86_64.rpm                              # Fedora
-sudo zypper install --allow-unsigned-rpm ./vaani-0.3.0-1.x86_64.rpm      # openSUSE
+sudo dnf install ./vaani-0.4.0-1.x86_64.rpm                              # Fedora
+sudo zypper install --allow-unsigned-rpm ./vaani-0.4.0-1.x86_64.rpm      # openSUSE
 ```
 
 On Arch, the release's `PKGBUILD` builds the `vaani-bin` package from the tarball:
@@ -130,12 +130,18 @@ On Arch, the release's `PKGBUILD` builds the `vaani-bin` package from the tarbal
 ```sh
 mkdir vaani-bin && cd vaani-bin
 curl -LO https://github.com/sakshamm21/Vaani/releases/latest/download/PKGBUILD
+curl -LO https://github.com/sakshamm21/Vaani/releases/latest/download/vaani-bin.install
 makepkg -si
 ```
 
-For any other distribution, `vaani-0.3.0-x86_64-linux.tar.gz` holds the binaries. Unpack it and
+For any other distribution, `vaani-0.4.0-x86_64-linux.tar.gz` holds the binaries. Unpack it and
 run `./install.sh` to install under `~/.local` (`./install.sh --uninstall` removes it); it needs
 GTK 4 and ALSA from your distribution. `SHA256SUMS` lists the checksums of every file.
+
+The packages set everything up, including on Wayland: there is nothing to add to a group, no
+desktop setting to change and no need to log out or restart. Start Vaani once from the app menu
+(or `vaani settings`) and hold Right Ctrl. On GNOME and KDE Plasma, the desktop asks once to
+confirm Vaani's shortcut.
 
 ### From source
 
@@ -320,8 +326,8 @@ Vaani works on Wayland desktops. A few things work differently from X11:
 
 | | GNOME | KDE Plasma, Hyprland, sway and other wlroots desktops |
 | --- | --- | --- |
-| Shortcut | Through the desktop's shortcut portal. Vaani asks once to add a **Dictate** shortcut (Ctrl+Alt+Space by default); change it in **Settings → Keyboard → Shortcuts → Apps**. Hold to talk and tap for hands-free both work. | The same portal on KDE Plasma. On every desktop, Vaani reads the keyboard directly instead when you are in the `input` group, so any key works, including a lone Right Ctrl. |
-| Inserting text | Clipboard through XWayland, paste key through a virtual keyboard (`/dev/uinput`). | The Wayland clipboard (data-control protocol), paste key through a virtual keyboard. |
+| Shortcut | Through the desktop's shortcut portal. Vaani asks once to add a **Dictate** shortcut (Ctrl+Alt+Space by default); change it in **Settings → Keyboard → Shortcuts → Apps**. Hold to talk and tap for hands-free both work. | The same portal on KDE Plasma (change it in **System Settings → Shortcuts**). On Hyprland, Vaani binds the key chosen in its settings itself, Right Ctrl by default, with nothing to add to `hyprland.conf`. On every desktop, Vaani reads the keyboard directly instead when you are in the `input` group, so any key works, including a lone Right Ctrl. |
+| Inserting text | Clipboard through XWayland, paste key through a virtual keyboard (`/dev/uinput`). | The Wayland clipboard (the ext or wlr data-control protocol), paste key through a virtual keyboard. |
 | Recording pill | Shown through XWayland, above other windows. | The same. |
 
 To hold any single key, as on X11, add yourself to the `input` group and log in again:
