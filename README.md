@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/sakshamm21/vaani/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/sakshamm21/vaani/ci.yml?branch=main&style=flat-square&label=build&color=d6457a" alt="Build status"></a>
-  <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11-1d1d1f?style=flat-square" alt="Platform: Linux, X11">
+  <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20X11%20%C2%B7%20Wayland-1d1d1f?style=flat-square" alt="Platform: Linux, X11 and Wayland">
   <img src="https://img.shields.io/badge/made%20with-Rust%20%2B%20GTK%204-1d1d1f?style=flat-square" alt="Made with Rust and GTK 4">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square" alt="License: MIT"></a>
 </p>
@@ -80,46 +80,62 @@ your previous clipboard is restored afterwards.
 2. [Installation](#installation)
 3. [First run](#first-run)
 4. [Using Vaani](#using-vaani)
-5. [Settings](#settings)
-6. [Speech models](#speech-models)
-7. [Cloud providers](#cloud-providers)
-8. [Command line](#command-line)
-9. [Files and privacy](#files-and-privacy)
-10. [Troubleshooting](#troubleshooting)
-11. [Updating and uninstalling](#updating-and-uninstalling)
-12. [Building from source](#building-from-source)
-13. [Project layout](#project-layout)
-14. [Roadmap](#roadmap)
-15. [License](#license)
+5. [Wayland](#wayland)
+6. [Settings](#settings)
+7. [Speech models](#speech-models)
+8. [Cloud providers](#cloud-providers)
+9. [Command line](#command-line)
+10. [Files and privacy](#files-and-privacy)
+11. [Troubleshooting](#troubleshooting)
+12. [Updating and uninstalling](#updating-and-uninstalling)
+13. [Building from source](#building-from-source)
+14. [Project layout](#project-layout)
+15. [Roadmap](#roadmap)
+16. [License](#license)
 
 ## Requirements
 
 | | |
 | --- | --- |
-| Display server | X11 (Xorg). Wayland is not supported yet. |
-| Distributions | Linux Mint 21 or later, Ubuntu 22.04 or later, Debian 12, Pop!_OS and other Debian-based systems. On other distributions, build from source. |
-| Desktop | Any X11 desktop with a system tray. Developed and tested on Cinnamon (Linux Mint 22.3). |
+| Display server | X11 (Xorg) or Wayland. See [Wayland](#wayland) for what differs. |
+| Distributions | Packages for Debian 12, Ubuntu 22.04 or later, Linux Mint 21 or later, Pop!_OS, Fedora, openSUSE Tumbleweed and Leap 15.6, and Arch. Elsewhere, use the tarball or build from source. |
+| Desktop | Any desktop. Developed on Cinnamon (Linux Mint 22.3), tested on GNOME 50 (Ubuntu 26.04) and sway. A system tray is optional. |
 | Memory | 1 GB free with the default model (Parakeet v3). Smaller models use less. With a cloud engine, 115 MB. |
 | Disk | 46 MB for the app, plus 100 MB to 1.9 GB per model. Building from source needs 2 GB more. |
 | Other | A microphone, and an internet connection for the first model download. |
 
-To check your session type, run `echo $XDG_SESSION_TYPE`. It should print `x11`.
+To check your session type, run `echo $XDG_SESSION_TYPE`. It prints `x11` or `wayland`.
 
 ## Installation
 
 ### From a release package
 
-Download `vaani_0.2.0_amd64.deb` from the [latest release](https://github.com/sakshamm21/Vaani/releases/latest)
+Download `vaani_0.3.0_amd64.deb` from the [latest release](https://github.com/sakshamm21/Vaani/releases/latest)
 and install it:
 
 ```sh
-sudo apt install ./vaani_0.2.0_amd64.deb
+sudo apt install ./vaani_0.3.0_amd64.deb
 vaani settings
 ```
 
-The release also has `vaani-0.2.0-x86_64-linux.tar.gz` for other distributions. Unpack it and
-run `./install.sh` to install under `~/.local`; it needs GTK 4 and ALSA from your distribution.
-`SHA256SUMS` lists the checksums of both files.
+On Fedora and openSUSE, download `vaani-0.3.0-1.x86_64.rpm` and install it:
+
+```sh
+sudo dnf install ./vaani-0.3.0-1.x86_64.rpm                              # Fedora
+sudo zypper install --allow-unsigned-rpm ./vaani-0.3.0-1.x86_64.rpm      # openSUSE
+```
+
+On Arch, the release's `PKGBUILD` builds the `vaani-bin` package from the tarball:
+
+```sh
+mkdir vaani-bin && cd vaani-bin
+curl -LO https://github.com/sakshamm21/Vaani/releases/latest/download/PKGBUILD
+makepkg -si
+```
+
+For any other distribution, `vaani-0.3.0-x86_64-linux.tar.gz` holds the binaries. Unpack it and
+run `./install.sh` to install under `~/.local` (`./install.sh --uninstall` removes it); it needs
+GTK 4 and ALSA from your distribution. `SHA256SUMS` lists the checksums of every file.
 
 ### From source
 
@@ -131,16 +147,18 @@ cd Vaani
 
 The install script:
 
-1. Installs the build dependencies with `apt` if any are missing. This is the only step that
-   asks for your password.
+1. Installs the build dependencies with `apt`, `dnf`, `pacman` or `zypper` if any are
+   missing. This, and the Wayland rule in step 5, are the only steps that ask for your password.
 2. Installs the Rust toolchain through [rustup](https://rustup.rs) if `cargo` is not found.
    It is installed for your user only.
 3. Builds Vaani in release mode. The first build compiles every dependency and takes several minutes; later builds are quick.
 4. Installs `vaani` and `vaani-worker` to `~/.local/bin`, the application icon and menu entry
    to `~/.local/share`, and the interface fonts to `~/.local/share/fonts/vaani`.
-5. Starts Vaani.
+5. If `/dev/uinput` is not writable, adds a udev rule (`/etc/udev/rules.d/70-vaani-uinput.rules`)
+   so Vaani can press the paste key on Wayland. Steam and other input tools ship the same rule.
+6. Starts Vaani.
 
-Nothing is installed system-wide apart from the build dependencies.
+Nothing else is installed system-wide.
 
 If `~/.local/bin` is not on your `PATH`, the script prints a notice. Ubuntu, Mint and Debian
 add it at your next login. Until then, start Vaani from the application menu.
@@ -151,14 +169,28 @@ On Debian, Ubuntu and Mint the script installs these packages for you:
 
 ```sh
 sudo apt install build-essential pkg-config clang cmake libasound2-dev libgtk-4-dev \
-  libx11-dev libxi-dev libxtst-dev libxcb1-dev
+  libx11-dev libxi-dev libxtst-dev libxcb1-dev libxkbcommon-dev
 ```
 
 On Fedora:
 
 ```sh
-sudo dnf install gcc gcc-c++ pkgconf clang cmake alsa-lib-devel gtk4-devel \
-  libX11-devel libXi-devel libXtst-devel libxcb-devel
+sudo dnf install gcc gcc-c++ make pkgconf clang cmake alsa-lib-devel gtk4-devel \
+  libX11-devel libXi-devel libXtst-devel libxcb-devel libxkbcommon-devel
+```
+
+On Arch:
+
+```sh
+sudo pacman -S --needed base-devel pkgconf clang cmake alsa-lib gtk4 libx11 libxi libxtst \
+  libxcb libxkbcommon
+```
+
+On openSUSE:
+
+```sh
+sudo zypper install gcc gcc-c++ make pkgconf clang cmake alsa-devel gtk4-devel libX11-devel \
+  libXi-devel libXtst-devel libxcb-devel libxkbcommon-devel
 ```
 
 ## First run
@@ -181,7 +213,7 @@ Vaani adds itself to your desktop's startup applications, so it starts at every 
 can turn this off under **General → Start Vaani when I log in**.
 
 No additional permissions are required on X11. Vaani does not need to be in the `input` group
-and does not use `sudo` at runtime.
+and does not use `sudo` at runtime. On Wayland, see [Wayland](#wayland).
 
 ## Using Vaani
 
@@ -281,6 +313,41 @@ trailing_space = false
 
 The app id is the window class or Wayland app id, such as `firefox` or `org.gnome.TextEditor`.
 Vaani's log (see [Troubleshooting](#troubleshooting)) names the app for each dictation.
+
+## Wayland
+
+Vaani works on Wayland desktops. A few things work differently from X11:
+
+| | GNOME | KDE Plasma, Hyprland, sway and other wlroots desktops |
+| --- | --- | --- |
+| Shortcut | Through the desktop's shortcut portal. Vaani asks once to add a **Dictate** shortcut (Ctrl+Alt+Space by default); change it in **Settings → Keyboard → Shortcuts → Apps**. Hold to talk and tap for hands-free both work. | The same portal on KDE Plasma. On every desktop, Vaani reads the keyboard directly instead when you are in the `input` group, so any key works, including a lone Right Ctrl. |
+| Inserting text | Clipboard through XWayland, paste key through a virtual keyboard (`/dev/uinput`). | The Wayland clipboard (data-control protocol), paste key through a virtual keyboard. |
+| Recording pill | Shown through XWayland, above other windows. | The same. |
+
+To hold any single key, as on X11, add yourself to the `input` group and log in again:
+
+```sh
+sudo usermod -aG input $USER
+```
+
+sway has no shortcut portal: there, join the `input` group, or bind `vaani toggle` in your sway
+config (`bindsym $mod+d exec vaani toggle`).
+
+The shortcut portal can't watch Esc without taking it from every app, so with the portal,
+cancel a dictation from the pill or the tray instead.
+
+The packages and the install script add a udev rule that lets you use `/dev/uinput`. If
+`vaani doctor` says it can't open `/dev/uinput`, add the rule by hand:
+
+```sh
+echo 'KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"' |
+  sudo tee /etc/udev/rules.d/70-vaani-uinput.rules
+sudo udevadm trigger --subsystem-match=misc --action=change
+```
+
+When Vaani can't tell which app has focus (native Wayland apps on GNOME), it pastes with
+Shift+Insert, which works in terminals and other apps alike. Per-app rules need the app id, so
+on GNOME they apply to XWayland apps only.
 
 ## Settings
 
@@ -441,9 +508,9 @@ Start with `vaani doctor`. It reports the session type, desktop, microphone, hot
 and text-insertion status. Include its output in bug reports.
 
 **Nothing happens when I press the key.**
-Check that Vaani is running (`vaani status`) and that you are on an X11 session
-(`echo $XDG_SESSION_TYPE`). Another application may be using the same key; choose a different
-key under **General → Dictation key**.
+Check that Vaani is running (`vaani status`). Another application may be using the same key;
+choose a different key under **General → Dictation key**. On Wayland, see [Wayland](#wayland)
+for which shortcut is in use.
 
 **The text is not inserted into one application.**
 Vaani pastes first and types the text key by key if the application does not take the paste.
@@ -481,8 +548,9 @@ VAANI_LOG=debug vaani run
 
 ## Updating and uninstalling
 
-If you installed the `.deb`, install the new release's `.deb` the same way, and remove Vaani
-with `sudo apt remove vaani`.
+If you installed a package, install the new release's package the same way. Remove Vaani with
+`sudo apt remove vaani`, `sudo dnf remove vaani`, `sudo zypper remove vaani` or
+`sudo pacman -R vaani-bin`.
 
 For a source install, pull the latest changes and run the install script again. Settings, history and
 models are kept.
@@ -539,16 +607,16 @@ crates/
   vaani-worker     Speech recognition process (sherpa-onnx)
   vaani-audio      Microphone capture and resampling
   vaani-stt        Local and cloud recognition engines
-  vaani-hotkey     Global shortcut (X11 XInput2)
-  vaani-inject     Text insertion (clipboard and XTest)
-  vaani-text       Text clean-up
+  vaani-hotkey     Global shortcut (X11 XInput2, evdev, GlobalShortcuts portal)
+  vaani-inject     Text insertion (X11 and Wayland clipboard, XTest and uinput keys)
+  vaani-text       Text clean-up and Hindi transliteration
   vaani-llm        Optional AI clean-up (language-model providers and guardrails)
   vaani-store      History (SQLite) and API keys (Secret Service)
   vaani-models     Model catalogue and downloads
   vaani-core       Configuration, state machine and paths
   vaani-platform   Session and desktop detection
 models/            Model catalogue (registry.toml)
-assets/            Icons, desktop entry, fonts and README images
+assets/            Icons, desktop entry, udev rule, fonts and README images
 scripts/           Install and packaging scripts
 ```
 
