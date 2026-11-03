@@ -263,6 +263,7 @@ impl Settings {
         stack.add_titled(&build_general(&inner), Some("general"), "General");
         stack.add_titled(&build_speech(&inner), Some("speech"), "Speech Model");
         stack.add_titled(&build_cloud(&inner), Some("cloud"), "Cloud");
+        stack.add_titled(&build_dictionary(&inner), Some("dictionary"), "Dictionary");
         stack.add_titled(&build_history(&inner), Some("history"), "History");
         stack.add_titled(&build_about(&inner), Some("about"), "About");
 
@@ -1203,6 +1204,142 @@ fn build_cloud(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     actions.append(&use_cloud);
     actions.append(&get_link);
     content.append(&actions);
+    sw
+}
+
+/// Spoken commands and word replacements.
+fn build_dictionary(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
+    let (sw, content) = page(
+        "Dictionary",
+        "Say punctuation out loud, and teach Vaani how to write names and words.",
+    );
+    let shared = inner.shared.clone();
+    let cfg = config(&shared);
+
+    group(&content, "Spoken Commands");
+    let toggle = {
+        let shared = shared.clone();
+        switch(cfg.dictionary.spoken_commands, move |v| {
+            update_config(&shared, |c| c.dictionary.spoken_commands = v)
+        })
+    };
+    let mut rows = vec![row(
+        "Use spoken commands",
+        "Say a command and Vaani writes it instead of the words.",
+        &toggle,
+    )];
+    for (say, writes) in [
+        ("“new line”", "starts a new line"),
+        ("“new paragraph”", "leaves a blank line"),
+        ("“comma”, “full stop”", ",  ."),
+        ("“question mark”, “exclamation mark”", "?  !"),
+        ("“colon”, “semicolon”", ":  ;"),
+    ] {
+        let w = label(writes, "row-sub");
+        w.set_wrap(false);
+        rows.push(row(say, "", &w));
+    }
+    content.append(&card(&rows));
+
+    group(&content, "Replacements");
+    content.append(&label(
+        "When Vaani hears a word or phrase on the left, it writes the one on the right. \
+         Use it for names, brands and anything the model spells wrong.",
+        "row-sub",
+    ));
+    let list = gtk4::Box::new(Orientation::Vertical, 0);
+    list.add_css_class("card");
+    list.set_margin_top(10);
+    content.append(&list);
+
+    let from = gtk4::Entry::builder()
+        .placeholder_text("When I say")
+        .hexpand(true)
+        .build();
+    let to = gtk4::Entry::builder()
+        .placeholder_text("Write")
+        .hexpand(true)
+        .build();
+    let add = gtk4::Button::with_label("Add");
+    add.add_css_class("suggested-action");
+    let bar = gtk4::Box::new(Orientation::Horizontal, 8);
+    bar.set_margin_top(10);
+    bar.append(&from);
+    bar.append(&to);
+    bar.append(&add);
+    content.append(&bar);
+
+    fn rebuild(list: &gtk4::Box, shared: &Arc<Shared>) {
+        while let Some(c) = list.first_child() {
+            list.remove(&c);
+        }
+        let reps = config(shared).dictionary.replacements;
+        if reps.is_empty() {
+            let empty = row(
+                "No replacements yet",
+                "For example: “vani” → “Vaani”, or “my email” → your address.",
+                &gtk4::Box::new(Orientation::Horizontal, 0),
+            );
+            list.append(&empty);
+            return;
+        }
+        for (i, r) in reps.iter().enumerate() {
+            if i > 0 {
+                list.append(&gtk4::Separator::new(Orientation::Horizontal));
+            }
+            let del = gtk4::Button::from_icon_name("user-trash-symbolic");
+            del.add_css_class("flat");
+            del.set_tooltip_text(Some("Remove"));
+            {
+                let (list, shared, from) = (list.clone(), shared.clone(), r.from.clone());
+                del.connect_clicked(move |_| {
+                    update_config(&shared, |c| {
+                        c.dictionary.replacements.retain(|r| r.from != from)
+                    });
+                    rebuild(&list, &shared);
+                });
+            }
+            list.append(&row(&format!("{}  →  {}", r.from, r.to), "", &del));
+        }
+    }
+    rebuild(&list, &shared);
+
+    let submit = {
+        let (list, shared, from, to) = (list.clone(), shared.clone(), from.clone(), to.clone());
+        move || {
+            let (f, t) = (from.text().trim().to_string(), to.text().trim().to_string());
+            if f.is_empty() || t.is_empty() {
+                return;
+            }
+            update_config(&shared, |c| {
+                c.dictionary
+                    .replacements
+                    .retain(|r| !r.from.eq_ignore_ascii_case(&f));
+                c.dictionary
+                    .replacements
+                    .push(vaani_core::config::Replacement { from: f, to: t });
+            });
+            from.set_text("");
+            to.set_text("");
+            from.grab_focus();
+            rebuild(&list, &shared);
+        }
+    };
+    let submit = Rc::new(submit);
+    {
+        let submit = submit.clone();
+        add.connect_clicked(move |_| submit());
+    }
+    {
+        let submit = submit.clone();
+        to.connect_activate(move |_| submit());
+    }
+    {
+        let to = to.clone();
+        from.connect_activate(move |_| {
+            to.grab_focus();
+        });
+    }
     sw
 }
 

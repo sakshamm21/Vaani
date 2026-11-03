@@ -50,6 +50,7 @@ pub struct Config {
     pub audio: Audio,
     pub engine: Engine,
     pub cleanup: Cleanup,
+    pub dictionary: Dictionary,
     pub insert: Insert,
     pub privacy: Privacy,
     pub logging: Logging,
@@ -64,6 +65,7 @@ impl Default for Config {
             audio: Audio::default(),
             engine: Engine::default(),
             cleanup: Cleanup::default(),
+            dictionary: Dictionary::default(),
             insert: Insert::default(),
             privacy: Privacy::default(),
             logging: Logging::default(),
@@ -209,6 +211,33 @@ impl Default for Cleanup {
             remove_fillers: true,
         }
     }
+}
+
+/// Words you say and how they should be written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Dictionary {
+    /// "new line", "new paragraph", "comma", "full stop", "question mark" and similar.
+    pub spoken_commands: bool,
+    /// Whole words or phrases replaced after transcription, ignoring case.
+    pub replacements: Vec<Replacement>,
+}
+
+impl Default for Dictionary {
+    fn default() -> Self {
+        Self {
+            spoken_commands: true,
+            replacements: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Replacement {
+    /// What the model writes ("vani").
+    pub from: String,
+    /// What you want instead ("Vaani").
+    pub to: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

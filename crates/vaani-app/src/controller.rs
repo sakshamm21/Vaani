@@ -574,6 +574,14 @@ impl Job {
         let rules = vaani_text::Rules {
             remove_fillers: self.config.cleanup.remove_fillers,
             trailing_space: self.config.insert.trailing_space,
+            spoken_commands: self.config.dictionary.spoken_commands,
+            replacements: self
+                .config
+                .dictionary
+                .replacements
+                .iter()
+                .map(|r| (r.from.clone(), r.to.clone()))
+                .collect(),
         };
         let Some(text) = vaani_text::clean(&raw, &rules) else {
             tracing::debug!("nothing to insert");
