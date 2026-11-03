@@ -15,7 +15,9 @@ use ::evdev::Device as RawDevice;
 use ::evdev::{EventType, KeyCode};
 use crossbeam_channel::Sender;
 
-use crate::{HotkeyError, HotkeyEvent, Listener, keysym_for, name_for_keysym, wait_readable};
+use crate::{
+    HotkeyError, HotkeyEvent, Listener, Watch, keysym_for, name_for_keysym, wait_readable,
+};
 
 /// The evdev key code for a pickable key name.
 fn code_for(name: &str) -> Option<KeyCode> {
@@ -116,14 +118,14 @@ fn read(open: &mut BTreeMap<PathBuf, RawDevice>, timeout_ms: i32) -> Vec<(KeyCod
     out
 }
 
-pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
-    code_for(key).ok_or_else(|| HotkeyError::UnknownKey(key.into()))?;
+pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
+    code_for(&watch.key).ok_or_else(|| HotkeyError::UnknownKey(watch.key.clone()))?;
     let mut open = BTreeMap::new();
     let denied = scan(&mut open);
     if open.is_empty() {
         return Err(HotkeyError::NoInputAccess(denied));
     }
-    let key = Arc::new(Mutex::new(key.to_string()));
+    let key = Arc::new(Mutex::new(watch));
     let stop = Arc::new(AtomicBool::new(false));
     let listener = Listener {
         key: key.clone(),
@@ -132,19 +134,23 @@ pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
     thread::Builder::new()
         .name("hotkey".into())
         .spawn(move || {
-            let mut current = String::new();
+            let mut current = Watch::default();
             let mut hot = None;
+            let mut cmd = None;
             // Several keyboards can hold the key at once; only the first press and the last
             // release count.
             let mut held = 0usize;
+            let mut cmd_held = 0usize;
             let mut rescan = Instant::now();
             while !stop.load(Ordering::Relaxed) {
                 if let Ok(k) = key.lock() {
                     if *k != current {
                         current = k.clone();
-                        hot = code_for(&current);
+                        hot = code_for(&current.key);
+                        cmd = code_for(&current.command);
                         held = 0;
-                        tracing::info!(key = %current, "hotkey set (evdev)");
+                        cmd_held = 0;
+                        tracing::info!(key = %current.key, command = %current.command, "hotkey set (evdev)");
                     }
                 }
                 if rescan.elapsed() > Duration::from_secs(2) {
@@ -157,20 +163,14 @@ pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
                     };
                     // value: 1 press, 0 release, 2 auto-repeat (ignored)
                     if Some(code) == hot {
-                        match value {
-                            1 => {
-                                held += 1;
-                                if held == 1 {
-                                    send(HotkeyEvent::Down);
-                                }
-                            }
-                            0 if held > 0 => {
-                                held -= 1;
-                                if held == 0 {
-                                    send(HotkeyEvent::Up);
-                                }
-                            }
-                            _ => {}
+                        if let Some(ev) = track(&mut held, value, HotkeyEvent::Down, HotkeyEvent::Up) {
+                            send(ev);
+                        }
+                    } else if Some(code) == cmd {
+                        if let Some(ev) =
+                            track(&mut cmd_held, value, HotkeyEvent::CommandDown, HotkeyEvent::CommandUp)
+                        {
+                            send(ev);
                         }
                     } else if code == KeyCode::KEY_ESC && value == 1 {
                         send(HotkeyEvent::Escape);
@@ -180,6 +180,21 @@ pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
         })
         .map_err(|e| HotkeyError::Io(e.to_string()))?;
     Ok(listener)
+}
+
+/// Count presses of one key across keyboards; the first press and the last release count.
+fn track(held: &mut usize, value: i32, down: HotkeyEvent, up: HotkeyEvent) -> Option<HotkeyEvent> {
+    match value {
+        1 => {
+            *held += 1;
+            (*held == 1).then_some(down)
+        }
+        0 if *held > 0 => {
+            *held -= 1;
+            (*held == 0).then_some(up)
+        }
+        _ => None,
+    }
 }
 
 pub fn capture_next_key(timeout: Duration) -> Result<Option<&'static str>, HotkeyError> {

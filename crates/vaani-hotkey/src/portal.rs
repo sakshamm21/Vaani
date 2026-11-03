@@ -16,9 +16,10 @@ use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
 use crossbeam_channel::Sender;
 use futures_util::StreamExt;
 
-use crate::{HotkeyError, HotkeyEvent, Listener, keysym_for};
+use crate::{HotkeyError, HotkeyEvent, Listener, Watch, keysym_for};
 
 const ID: &str = "dictate";
+const COMMAND_ID: &str = "command";
 
 /// The trigger we suggest, in the XDG shortcuts format.
 fn preferred_trigger(key: &str) -> String {
@@ -29,9 +30,10 @@ fn preferred_trigger(key: &str) -> String {
     }
 }
 
-pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
-    let trigger = preferred_trigger(key);
-    let key = Arc::new(Mutex::new(key.to_string()));
+pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
+    let trigger = preferred_trigger(&watch.key);
+    let command = !watch.command.is_empty();
+    let key = Arc::new(Mutex::new(watch));
     let stop = Arc::new(AtomicBool::new(false));
     let listener = Listener {
         key,
@@ -51,7 +53,7 @@ pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
                     return;
                 }
             };
-            rt.block_on(run(trigger, tx, stop, ready_tx));
+            rt.block_on(run(trigger, command, tx, stop, ready_tx));
         })
         .map_err(|e| HotkeyError::Io(e.to_string()))?;
     // Binding can wait on the user confirming in a desktop dialog.
@@ -66,6 +68,7 @@ pub fn listen(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
 
 async fn run(
     trigger: String,
+    command: bool,
     tx: Sender<HotkeyEvent>,
     stop: Arc<AtomicBool>,
     ready: Sender<Result<(), HotkeyError>>,
@@ -76,8 +79,16 @@ async fn run(
         let session = portal.create_session(Default::default()).await.map_err(p)?;
         let shortcut = NewShortcut::new(ID, "Dictate (hold to talk)")
             .preferred_trigger(Some(trigger.as_str()));
+        let mut shortcuts = vec![shortcut];
+        if command {
+            // No suggested keys: the desktop asks the user to pick them.
+            shortcuts.push(NewShortcut::new(
+                COMMAND_ID,
+                "Command mode: change the selected text (hold to talk)",
+            ));
+        }
         let bound = portal
-            .bind_shortcuts(&session, &[shortcut], None, Default::default())
+            .bind_shortcuts(&session, &shortcuts, None, Default::default())
             .await
             .map_err(p)?
             .response()
@@ -104,6 +115,7 @@ async fn run(
         }
     };
     let mut held = false;
+    let mut cmd_held = false;
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     while !stop.load(Ordering::Relaxed) {
         tokio::select! {
@@ -111,12 +123,18 @@ async fn run(
                 if a.shortcut_id() == ID && !held {
                     held = true;
                     let _ = tx.send(HotkeyEvent::Down);
+                } else if a.shortcut_id() == COMMAND_ID && !cmd_held {
+                    cmd_held = true;
+                    let _ = tx.send(HotkeyEvent::CommandDown);
                 }
             }
             Some(d) = up.next() => {
                 if d.shortcut_id() == ID && held {
                     held = false;
                     let _ = tx.send(HotkeyEvent::Up);
+                } else if d.shortcut_id() == COMMAND_ID && cmd_held {
+                    cmd_held = false;
+                    let _ = tx.send(HotkeyEvent::CommandUp);
                 }
             }
             _ = tick.tick() => {}

@@ -27,6 +27,8 @@ pub enum Cmd {
     Status,
     /// Paste the last dictation again.
     PasteLast,
+    /// Command mode: start, or finish, saying how to change the selected text.
+    Command,
     /// Open the settings window.
     Settings,
     /// Stop the running app.

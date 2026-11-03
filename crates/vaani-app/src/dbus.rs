@@ -57,6 +57,11 @@ impl Service {
     fn paste_last(&self) {
         let _ = self.tx.send(Input::PasteLast);
     }
+    fn command(&self) -> String {
+        let _ = self.tx.send(Input::CommandToggle);
+        std::thread::sleep(Duration::from_millis(40));
+        self.shared.state().to_string()
+    }
     fn reload_engine(&self) {
         let _ = self.tx.send(Input::ReloadEngine);
     }
@@ -85,6 +90,7 @@ trait Vaani {
     fn cancel(&self) -> zbus::Result<String>;
     fn status(&self) -> zbus::Result<String>;
     fn paste_last(&self) -> zbus::Result<()>;
+    fn command(&self) -> zbus::Result<String>;
     fn reload_engine(&self) -> zbus::Result<()>;
     fn show_settings(&self) -> zbus::Result<()>;
     fn quit(&self) -> zbus::Result<()>;
@@ -98,6 +104,7 @@ pub enum Call {
     Cancel,
     Status,
     PasteLast,
+    Command,
     ReloadEngine,
     ShowSettings,
     Quit,
@@ -142,6 +149,7 @@ pub fn try_call(call: Call) -> Result<Option<String>> {
             Call::Cancel => proxy.cancel().await.map(Some),
             Call::Status => proxy.status().await.map(Some),
             Call::PasteLast => proxy.paste_last().await.map(|()| None),
+            Call::Command => proxy.command().await.map(Some),
             Call::ReloadEngine => proxy.reload_engine().await.map(|()| None),
             Call::ShowSettings => proxy.show_settings().await.map(|()| None),
             Call::Quit => proxy.quit().await.map(|()| None),

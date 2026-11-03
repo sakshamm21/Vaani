@@ -157,7 +157,10 @@ impl Service {
                     let _ = reply.send(self.backspace(n));
                 }
                 Ok(Cmd::ReadClipboard(reply)) => {
-                    let _ = reply.send(self.clipboard_text());
+                    let _ = reply.send(self.text_of(Sel::Clipboard));
+                }
+                Ok(Cmd::ReadSelection(reply)) => {
+                    let _ = reply.send(self.text_of(Sel::Primary));
                 }
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return,
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
@@ -300,8 +303,8 @@ impl Service {
         }
     }
 
-    fn clipboard_text(&mut self) -> String {
-        let saved = self.save(Sel::Clipboard);
+    fn text_of(&mut self, sel: Sel) -> String {
+        let saved = self.save(sel);
         TEXT_TYPES
             .iter()
             .find_map(|t| saved.get(*t))

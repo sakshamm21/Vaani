@@ -184,6 +184,68 @@ pub fn clean(text: &str, req: &Request<'_>) -> Result<String, LlmError> {
     accept(text, &out)
 }
 
+const COMMAND_PROMPT: &str = "\
+You edit text for a person who selected it and then said how to change it.
+Return ONLY the new text that replaces the selection. No preamble, no quotes, no explanations, \
+no markdown fences unless the selection already used them.
+Change only what the instruction asks for: don't add greetings, sign-offs or facts unless \
+asked. Keep the selection's language unless asked to translate, and keep its formatting (line breaks, \
+lists) unless asked to change it. Spell these terms exactly: {dictionary}
+The user message has the selection between <selection> tags and the spoken instruction \
+between <instruction> tags.";
+
+/// Command mode: rewrite `selection` as the spoken `instruction` says ("make this more
+/// formal", "translate to Hindi", "turn this into a list"). An empty selection means: write
+/// what the instruction asks for. The result replaces the selection.
+pub fn command(selection: &str, instruction: &str, req: &Request<'_>) -> Result<String, LlmError> {
+    let instruction = instruction.trim();
+    if instruction.is_empty() {
+        return Err(LlmError::Rejected("no instruction"));
+    }
+    let dictionary = if req.dictionary.is_empty() {
+        "(none)".to_string()
+    } else {
+        req.dictionary.join(", ")
+    };
+    let system = COMMAND_PROMPT.replace("{dictionary}", &dictionary);
+    let user = format!(
+        "<selection>\n{}\n</selection>\n<instruction>\n{instruction}\n</instruction>",
+        selection.trim_end()
+    );
+    let words = selection.split_whitespace().count() + instruction.split_whitespace().count();
+    let mut max_tokens = (words * 4 + 256).min(8192) as u32;
+    if is_reasoning(req) {
+        max_tokens += 1024;
+    }
+    let out = complete(req, &system, &user, max_tokens)?;
+    let out = if selection.contains("```") {
+        out.trim()
+    } else {
+        strip_wrapping(out.trim())
+    };
+    if out.is_empty() {
+        return Err(LlmError::Rejected("empty reply"));
+    }
+    Ok(out.to_string())
+}
+
+/// Drop a code fence or tags the model may wrap its answer in.
+fn strip_wrapping(s: &str) -> &str {
+    let s = s
+        .strip_prefix("<selection>")
+        .and_then(|r| r.strip_suffix("</selection>"))
+        .unwrap_or(s)
+        .trim();
+    if let Some(inner) = s.strip_prefix("```").and_then(|r| r.strip_suffix("```")) {
+        // Skip a language tag on the opening fence.
+        return inner
+            .split_once('\n')
+            .map_or(inner, |(_, body)| body)
+            .trim();
+    }
+    s
+}
+
 fn build_prompt(req: &Request<'_>) -> String {
     let base = if req.prompt.trim().is_empty() {
         DEFAULT_PROMPT
@@ -541,6 +603,13 @@ pub fn accept(input: &str, output: &str) -> Result<String, LlmError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn command_reply_unwrapped() {
+        assert_eq!(strip_wrapping("```text\nHello there\n```"), "Hello there");
+        assert_eq!(strip_wrapping("<selection>Hi</selection>"), "Hi");
+        assert_eq!(strip_wrapping("Plain reply"), "Plain reply");
+    }
+
     use super::*;
 
     fn ok(i: &str, o: &str) -> bool {

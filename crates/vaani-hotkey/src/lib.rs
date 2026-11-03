@@ -56,6 +56,18 @@ pub enum HotkeyEvent {
     Up,
     /// Esc was pressed (the app decides whether it means "cancel").
     Escape,
+    /// The command-mode key went down.
+    CommandDown,
+    /// The command-mode key came back up.
+    CommandUp,
+}
+
+/// The keys a listener watches: the dictation key and an optional command-mode key
+/// (empty when off).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Watch {
+    pub(crate) key: String,
+    pub(crate) command: String,
 }
 
 /// Keys a person can pick, as (name shown and stored in config, X keysym).
@@ -162,7 +174,7 @@ fn connect() -> Result<(RustConnection, u32), HotkeyError> {
 
 /// A running hotkey listener. Change the key with [`Listener::set_key`]; drop to stop.
 pub struct Listener {
-    key: Arc<Mutex<String>>,
+    key: Arc<Mutex<Watch>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -212,14 +224,22 @@ pub fn portal_available() -> bool {
 /// Events go to `tx`.
 pub fn listen(
     key: &str,
+    command_key: &str,
     backend: Option<Backend>,
     tx: Sender<HotkeyEvent>,
 ) -> Result<(Listener, Backend), HotkeyError> {
+    if !command_key.is_empty() {
+        keysym_for(command_key).ok_or_else(|| HotkeyError::UnknownKey(command_key.into()))?;
+    }
+    let watch = Watch {
+        key: key.to_string(),
+        command: command_key.to_string(),
+    };
     let b = backend.unwrap_or_else(self::backend);
     let l = match b {
-        Backend::X11 => listen_x11(key, tx)?,
-        Backend::Evdev => evdev::listen(key, tx)?,
-        Backend::Portal => portal::listen(key, tx)?,
+        Backend::X11 => listen_x11(watch, tx)?,
+        Backend::Evdev => evdev::listen(watch, tx)?,
+        Backend::Portal => portal::listen(watch, tx)?,
     };
     Ok((l, b))
 }
@@ -246,21 +266,33 @@ impl Listener {
     pub fn set_key(&self, name: &str) -> Result<(), HotkeyError> {
         keysym_for(name).ok_or_else(|| HotkeyError::UnknownKey(name.into()))?;
         if let Ok(mut k) = self.key.lock() {
-            *k = name.to_string();
+            k.key = name.to_string();
+        }
+        Ok(())
+    }
+
+    /// Set the command-mode key; empty turns it off.
+    pub fn set_command_key(&self, name: &str) -> Result<(), HotkeyError> {
+        if !name.is_empty() {
+            keysym_for(name).ok_or_else(|| HotkeyError::UnknownKey(name.into()))?;
+        }
+        if let Ok(mut k) = self.key.lock() {
+            k.command = name.to_string();
         }
         Ok(())
     }
 }
 
 /// Start listening for `key` on X11. Events go to `tx`.
-fn listen_x11(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
+fn listen_x11(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyError> {
+    let key = &watch.key;
     keysym_for(key).ok_or_else(|| HotkeyError::UnknownKey(key.into()))?;
     let (conn, _root) = connect()?;
     let keymap = Keymap::load(&conn)?;
     if keymap.codes(keysym_for(key).unwrap_or(0)).is_empty() {
         return Err(HotkeyError::NotOnKeyboard(key.into()));
     }
-    let key = Arc::new(Mutex::new(key.to_string()));
+    let key = Arc::new(Mutex::new(watch));
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let listener = Listener {
         key: key.clone(),
@@ -270,16 +302,22 @@ fn listen_x11(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
         .name("hotkey".into())
         .spawn(move || {
             let esc = keymap.codes(ESCAPE);
-            let mut current = String::new();
+            let mut current = Watch::default();
             let mut hot: Vec<u32> = Vec::new();
+            let mut cmd: Vec<u32> = Vec::new();
             let mut down = false;
+            let mut cmd_down = false;
             while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Ok(k) = key.lock() {
                     if *k != current {
                         current = k.clone();
-                        hot = keymap.codes(keysym_for(&current).unwrap_or(0));
+                        hot = keymap.codes(keysym_for(&current.key).unwrap_or(0));
+                        cmd = keysym_for(&current.command)
+                            .map(|s| keymap.codes(s))
+                            .unwrap_or_default();
                         down = false;
-                        tracing::info!(key = %current, ?hot, "hotkey set");
+                        cmd_down = false;
+                        tracing::info!(key = %current.key, command = %current.command, "hotkey set");
                     }
                 }
                 let event = match conn.poll_for_event() {
@@ -309,6 +347,18 @@ fn listen_x11(key: &str, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyErro
                         if down {
                             down = false;
                             send(HotkeyEvent::Up);
+                        }
+                    }
+                    Event::XinputRawKeyPress(e) if cmd.contains(&e.detail) => {
+                        if !cmd_down && !e.flags.contains(KeyEventFlags::KEY_REPEAT) {
+                            cmd_down = true;
+                            send(HotkeyEvent::CommandDown);
+                        }
+                    }
+                    Event::XinputRawKeyRelease(e) if cmd.contains(&e.detail) => {
+                        if cmd_down {
+                            cmd_down = false;
+                            send(HotkeyEvent::CommandUp);
                         }
                     }
                     Event::XinputRawKeyPress(e) if esc.contains(&e.detail) => {

@@ -143,6 +143,8 @@ pub struct Hotkey {
     pub mode: HotkeyMode,
     /// Key or chord, e.g. "RightCtrl", "Super+Space".
     pub key: String,
+    /// Hold this key to change the selected text by voice ("make it shorter"); empty is off.
+    pub command_key: String,
     pub backend: HotkeyBackend,
 }
 
@@ -151,6 +153,7 @@ impl Default for Hotkey {
         Self {
             mode: HotkeyMode::PushToTalk,
             key: "RightCtrl".into(),
+            command_key: String::new(),
             backend: HotkeyBackend::Auto,
         }
     }

@@ -37,6 +37,7 @@ fn main() -> ExitCode {
         Cmd::Cancel => dbus::client_call(Call::Cancel),
         Cmd::Status => dbus::client_call(Call::Status),
         Cmd::PasteLast => dbus::client_call(Call::PasteLast),
+        Cmd::Command => dbus::client_call(Call::Command),
         Cmd::Settings => match dbus::try_call(Call::ShowSettings) {
             // Opened from the app menu while Vaani isn't running: start it with the window open.
             Err(e) if dbus::not_running(&e) => daemon::run(true),

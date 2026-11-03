@@ -120,6 +120,8 @@ pub enum Input {
     Hotkey(HotkeyEvent),
     Cmd(Command),
     PasteLast,
+    /// Start or finish a command-mode dictation (`vaani command`).
+    CommandToggle,
     Config(Box<Config>),
     /// Reload the speech engine (e.g. after downloading a model).
     ReloadEngine,
@@ -175,6 +177,8 @@ pub struct Controller {
     hotkey: Option<vaani_hotkey::Listener>,
     down_at: Option<Instant>,
     latched: bool,
+    /// The current dictation is a command for the selected text.
+    command_mode: bool,
     job_cancel: Option<Arc<AtomicBool>>,
     /// When the speaker was last heard, for the hands-free silence stop.
     last_voice: Option<Instant>,
@@ -243,6 +247,7 @@ impl Controller {
             hotkey: None,
             down_at: None,
             latched: false,
+            command_mode: false,
             job_cancel: None,
             last_voice: None,
             early: Early::default(),
@@ -267,7 +272,8 @@ impl Controller {
             }
         };
         let (htx, hrx) = crossbeam_channel::unbounded();
-        match vaani_hotkey::listen(&self.config.hotkey.key, backend, htx) {
+        let hk = &self.config.hotkey;
+        match vaani_hotkey::listen(&hk.key, &hk.command_key, backend, htx) {
             Ok((l, backend)) => {
                 tracing::info!(backend = backend.label(), "hotkey listening");
                 self.hotkey = Some(l);
@@ -516,13 +522,20 @@ impl Controller {
                 self.set_state();
             }
             Input::PasteLast => self.paste_last(),
+            Input::CommandToggle => {
+                if self.machine.state() == State::Idle {
+                    self.command_mode = true;
+                }
+                self.command(Command::Toggle);
+            }
             Input::ReloadEngine => self.load_engine(),
             Input::Config(new) => self.apply_config(*new),
         }
     }
 
     fn apply_config(&mut self, new: Config) {
-        let key_changed = new.hotkey.key != self.config.hotkey.key;
+        let key_changed = new.hotkey.key != self.config.hotkey.key
+            || new.hotkey.command_key != self.config.hotkey.command_key;
         let engine_changed = new.engine != self.config.engine;
         self.config = new;
         if let Ok(mut c) = self.shared.config.lock() {
@@ -531,7 +544,11 @@ impl Controller {
         if key_changed {
             match &self.hotkey {
                 Some(l) => {
-                    if let Err(e) = l.set_key(&self.config.hotkey.key) {
+                    let hk = &self.config.hotkey;
+                    if let Err(e) = l
+                        .set_key(&hk.key)
+                        .and_then(|()| l.set_command_key(&hk.command_key))
+                    {
                         tracing::warn!("{e}");
                     }
                 }
@@ -545,7 +562,19 @@ impl Controller {
 
     fn on_hotkey(&mut self, ev: HotkeyEvent) {
         let state = self.machine.state();
+        // The command key works like the dictation key, and marks the dictation as a command.
+        let ev = match ev {
+            HotkeyEvent::CommandDown => {
+                if state == State::Idle {
+                    self.command_mode = true;
+                }
+                HotkeyEvent::Down
+            }
+            HotkeyEvent::CommandUp => HotkeyEvent::Up,
+            ev => ev,
+        };
         match (self.config.hotkey.mode, ev) {
+            (_, HotkeyEvent::CommandDown | HotkeyEvent::CommandUp) => {}
             (_, HotkeyEvent::Escape) => {
                 if state != State::Idle {
                     self.command(Command::Cancel);
@@ -626,6 +655,7 @@ impl Controller {
                     r.discard();
                 }
                 self.early = Early::default();
+                self.command_mode = false;
                 tracing::info!("dictation cancelled");
             }
             Effect::AbortProcessing => {
@@ -659,6 +689,7 @@ impl Controller {
             shared: self.shared.clone(),
             cancel,
             early,
+            command: std::mem::take(&mut self.command_mode),
         };
         let tx = self.tx.clone();
         let _ = thread::Builder::new()
@@ -689,6 +720,7 @@ struct Job {
     shared: Arc<Shared>,
     cancel: Arc<AtomicBool>,
     early: Early,
+    command: bool,
 }
 
 impl Job {
@@ -713,6 +745,67 @@ impl Job {
             Ok(()) => tracing::info!(chars = n, "scratched the last dictation"),
             Err(e) => tracing::warn!("scratch that failed: {e}"),
         }
+    }
+
+    /// Command mode: rewrite the selected text as the spoken instruction says, and paste the
+    /// result over the selection.
+    fn run_command(&self, instruction: &str, app: &str) {
+        let Some(injector) = &self.injector else {
+            return;
+        };
+        let Some((provider, key)) = self.llm() else {
+            crate::notify::send(
+                "Command mode needs AI",
+                "Pick an AI provider and add its key in Settings, under AI clean-up.",
+            );
+            return;
+        };
+        let selection = injector.selection_text();
+        tracing::info!(%app, selection_chars = selection.chars().count(), "command mode");
+        let c = &self.config.cleanup;
+        let dictionary: Vec<String> = self
+            .config
+            .dictionary
+            .replacements
+            .iter()
+            .map(|r| r.to.clone())
+            .collect();
+        let req = vaani_llm::Request {
+            provider,
+            base_url: &c.ai_base_url,
+            model: &c.ai_model,
+            api_key: &key,
+            prompt: "",
+            style: vaani_llm::Style::from_id(&c.style),
+            extra: "",
+            dictionary: &dictionary,
+            // Rewriting takes longer than a clean-up.
+            timeout: Duration::from_millis(c.ai_timeout_ms.max(1000) * 4),
+        };
+        match vaani_llm::command(&selection, instruction, &req) {
+            Ok(out) if !self.cancel.load(Ordering::Relaxed) => match injector.insert(&out) {
+                Ok(outcome) => tracing::info!(?outcome, "command result inserted"),
+                Err(e) => tracing::warn!("command result not inserted: {e}"),
+            },
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("command mode: {e}");
+                crate::notify::send("Command didn't run", &e.to_string());
+            }
+        }
+    }
+
+    /// The configured AI provider and its key, when it may be used.
+    fn llm(&self) -> Option<(&'static vaani_llm::Provider, String)> {
+        let c = &self.config.cleanup;
+        let provider = vaani_llm::provider(&c.ai_provider)?;
+        if self.config.privacy.local_only && !provider.local {
+            return None;
+        }
+        if provider.key_id.is_empty() {
+            return Some((provider, String::new()));
+        }
+        vaani_store::secrets::get_key(provider.key_id).map(|k| (provider, k))
     }
 
     /// The optional AI pass. None keeps the rule-cleaned text (off, skipped, failed or
@@ -954,6 +1047,10 @@ impl Job {
             tracing::debug!("nothing to insert");
             return;
         };
+        if self.command {
+            self.run_command(&text, &app);
+            return;
+        }
         let snippet = rules
             .snippets
             .iter()

@@ -80,6 +80,7 @@ enum Cmd {
     FocusedApp(Sender<String>),
     Backspace(usize, Sender<Result<(), InjectError>>),
     ReadClipboard(Sender<String>),
+    ReadSelection(Sender<String>),
 }
 
 #[derive(Clone)]
@@ -169,6 +170,15 @@ impl Injector {
         rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default()
     }
 
+    /// The text currently selected in the focused app (the primary selection), or empty.
+    pub fn selection_text(&self) -> String {
+        let (tx, rx) = bounded(1);
+        if self.send(Cmd::ReadSelection(tx)).is_err() {
+            return String::new();
+        }
+        rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default()
+    }
+
     pub fn focused_app(&self) -> String {
         let (tx, rx) = bounded(1);
         if self.send(Cmd::FocusedApp(tx)).is_err() {
@@ -184,6 +194,7 @@ type Offer = BTreeMap<Atom, (Atom, Vec<u8>)>;
 
 struct Atoms {
     clipboard: Atom,
+    primary: Atom,
     targets: Atom,
     timestamp: Atom,
     multiple: Atom,
@@ -285,6 +296,7 @@ impl Service {
         };
         let a = Atoms {
             clipboard: atom("CLIPBOARD")?,
+            primary: AtomEnum::PRIMARY.into(),
             targets: atom("TARGETS")?,
             timestamp: atom("TIMESTAMP")?,
             multiple: atom("MULTIPLE")?,
@@ -348,6 +360,13 @@ impl Service {
                 }
                 Ok(Cmd::ReadClipboard(reply)) => {
                     let _ = reply.send(self.clipboard_text());
+                }
+                Ok(Cmd::ReadSelection(reply)) => {
+                    let text = match self.fetch_from(self.a.primary, self.a.utf8) {
+                        Ok(Some((_, bytes, 8))) => String::from_utf8_lossy(&bytes).into_owned(),
+                        _ => String::new(),
+                    };
+                    let _ = reply.send(text);
                 }
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return,
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
@@ -819,14 +838,16 @@ impl Service {
     }
 
     fn fetch(&self, target: Atom) -> Result<Option<(Atom, Vec<u8>, u8)>, InjectError> {
+        self.fetch_from(self.a.clipboard, target)
+    }
+
+    fn fetch_from(
+        &self,
+        selection: Atom,
+        target: Atom,
+    ) -> Result<Option<(Atom, Vec<u8>, u8)>, InjectError> {
         self.conn
-            .convert_selection(
-                self.win,
-                self.a.clipboard,
-                target,
-                self.a.prop,
-                CURRENT_TIME,
-            )
+            .convert_selection(self.win, selection, target, self.a.prop, CURRENT_TIME)
             .map_err(x)?;
         self.conn.flush().map_err(x)?;
         let deadline = Instant::now() + Duration::from_millis(300);
