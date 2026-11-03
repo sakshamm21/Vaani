@@ -85,7 +85,9 @@ struct Inner {
     // History
     history_list: gtk4::ListBox,
     history_search: gtk4::SearchEntry,
-    history_note: gtk4::Label,
+    /// Suggestion shown after a correction: (box, text, Add button).
+    history_note: (gtk4::Box, gtk4::Label, gtk4::Button),
+    learned: RefCell<Option<(String, String)>>,
     last_status: RefCell<Option<EngineStatus>>,
     last_history_check: RefCell<Instant>,
     last_history_top: RefCell<i64>,
@@ -277,7 +279,12 @@ impl Settings {
             about_logo: gtk4::Image::from_icon_name(crate::keys::app_icon()),
             history_list: gtk4::ListBox::new(),
             history_search: gtk4::SearchEntry::new(),
-            history_note: label("", "row-sub"),
+            history_note: (
+                gtk4::Box::new(Orientation::Horizontal, 8),
+                label("", "note-text"),
+                gtk4::Button::with_label("Add to Dictionary"),
+            ),
+            learned: RefCell::new(None),
             last_status: RefCell::new(None),
             last_history_check: RefCell::new(Instant::now() - Duration::from_secs(10)),
             last_history_top: RefCell::new(-1),
@@ -831,24 +838,18 @@ impl Settings {
             if let Some(h) = open_history() {
                 let _ = h.update_text(id, &new);
             }
+            // A small fix becomes a suggestion; nothing is added without a click.
             let learned = vaani_text::learn(&old, &new);
-            let note = &inner.history_note;
+            let (note, text, add) = &inner.history_note;
             if let Some((from, to)) = &learned {
-                update_config(&inner.shared, |c| {
-                    let reps = &mut c.dictionary.replacements;
-                    reps.retain(|r| !r.from.eq_ignore_ascii_case(from));
-                    reps.push(vaani_core::config::Replacement {
-                        from: from.clone(),
-                        to: to.clone(),
-                    });
-                });
-                note.set_text(&format!(
-                    "Learned: Vaani will write “{to}” when it hears “{from}”. You can remove this under Dictionary."
-                ));
+                text.set_text(&format!("Always write “{to}” when Vaani hears “{from}”?"));
+                add.set_label("Add to Dictionary");
+                add.set_sensitive(true);
                 note.set_visible(true);
             } else {
                 note.set_visible(false);
             }
+            *inner.learned.borrow_mut() = learned;
             // Glib idle: the row holding this button is about to be rebuilt.
             glib::idle_add_local_once(move || Settings { inner }.refresh_history());
         });
@@ -1990,10 +1991,40 @@ fn build_history(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     inner
         .history_list
         .set_selection_mode(gtk4::SelectionMode::None);
-    inner.history_note.add_css_class("note");
-    inner.history_note.set_margin_top(10);
-    inner.history_note.set_visible(false);
-    content.append(&inner.history_note);
+    {
+        let (note, text, add) = &inner.history_note;
+        note.add_css_class("note");
+        note.set_margin_top(10);
+        note.set_visible(false);
+        text.set_hexpand(true);
+        text.set_valign(Align::Center);
+        note.append(text);
+        add.add_css_class("suggested-action");
+        let dismiss = gtk4::Button::from_icon_name("window-close-symbolic");
+        dismiss.add_css_class("flat");
+        dismiss.set_tooltip_text(Some("Dismiss"));
+        note.append(add);
+        note.append(&dismiss);
+        {
+            let note = note.clone();
+            dismiss.connect_clicked(move |_| note.set_visible(false));
+        }
+        let weak = Rc::downgrade(inner);
+        add.connect_clicked(move |b| {
+            let Some(inner) = weak.upgrade() else { return };
+            let Some((from, to)) = inner.learned.borrow_mut().take() else {
+                return;
+            };
+            update_config(&inner.shared, |c| {
+                let reps = &mut c.dictionary.replacements;
+                reps.retain(|r| !r.from.eq_ignore_ascii_case(&from));
+                reps.push(vaani_core::config::Replacement { from, to });
+            });
+            b.set_label("Added");
+            b.set_sensitive(false);
+        });
+        content.append(note);
+    }
     inner.history_list.add_css_class("card");
     inner.history_list.set_margin_top(12);
     content.append(&inner.history_list);

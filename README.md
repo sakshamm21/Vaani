@@ -273,8 +273,8 @@ entirely, so audio never leaves the machine.
 **Cloud** configures the provider, API key, model and endpoint for cloud recognition.
 
 **History** lists previous dictations with search, copy and edit. When you correct a word or
-a short phrase (for example "vani" to "Vaani"), Vaani adds the fix to your Dictionary and
-writes it correctly from then on. **Clear all** deletes the list.
+a short phrase (for example "vani" to "Vaani"), Vaani offers to add the fix to your
+Dictionary, so it is written correctly from then on. **Clear all** deletes the list.
 
 **Overview** shows lifetime totals: dictations, words, your speaking pace in words per minute,
 and the time saved compared with typing at 40 words per minute.

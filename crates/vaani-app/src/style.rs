@@ -192,7 +192,8 @@ window.vaani-settings .stat {
 }
 window.vaani-settings .stat-num { font-size: 22px; font-weight: 700; color: @v_fg; font-feature-settings: "tnum"; }
 window.vaani-settings .stat-label { color: @v_muted; font-size: 12px; }
-window.vaani-settings label.note { color: @v_fg; background-color: alpha(@v_accent, 0.10); border-radius: 8px; padding: 8px 12px; }
+window.vaani-settings .note { background-color: alpha(@v_accent, 0.10); border-radius: 8px; padding: 6px 6px 6px 12px; }
+window.vaani-settings .note-text { color: @v_fg; font-size: 13px; }
 
 /* badges, keycaps */
 window.vaani-settings .badge {
