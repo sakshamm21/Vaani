@@ -1,6 +1,6 @@
 [package]
 name = "vaani-llm"
-description = "LlmProvider trait, cleanup and command prompts"
+description = "Optional AI clean-up of dictated text: providers, prompt and guardrails"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+reqwest.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

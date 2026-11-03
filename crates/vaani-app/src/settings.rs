@@ -297,6 +297,7 @@ impl Settings {
         stack.add_titled(&build_speech(&inner), Some("speech"), "Speech Model");
         stack.add_titled(&build_cloud(&inner), Some("cloud"), "Cloud");
         stack.add_titled(&build_dictionary(&inner), Some("dictionary"), "Dictionary");
+        stack.add_titled(&build_ai(&inner), Some("ai"), "AI Clean-up");
         stack.add_titled(&build_history(&inner), Some("history"), "History");
         stack.add_titled(&build_about(&inner), Some("about"), "About");
 
@@ -1704,6 +1705,301 @@ fn build_cloud(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     actions.append(&use_cloud);
     actions.append(&get_link);
     content.append(&actions);
+    sw
+}
+
+const SAMPLE: &str =
+    "um so i think we should meet at 3 actually 4 tomorrow and uh bring the the slides";
+
+/// The optional AI pass: provider, key, style, prompt, and a button to try it.
+fn build_ai(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
+    let (sw, content) = page(
+        "AI Clean-up",
+        "Optional. A language model fixes grammar, punctuation and self-corrections after each \
+         dictation. Text, never audio, is sent to the provider you pick; Ollama keeps it on this \
+         computer. If it is slow or its answer looks wrong, Vaani types the plain transcript.",
+    );
+    let cfg = config(&inner.shared);
+    let shared = inner.shared.clone();
+    let providers = vaani_llm::PROVIDERS;
+
+    let enabled = {
+        let shared = shared.clone();
+        switch(cfg.cleanup.ai_enabled, move |v| {
+            update_config(&shared, |c| c.cleanup.ai_enabled = v)
+        })
+    };
+    let names: Vec<&str> = providers.iter().map(|p| p.name).collect();
+    let provider = gtk4::DropDown::from_strings(&names);
+    provider.set_selected(
+        providers
+            .iter()
+            .position(|p| p.id == cfg.cleanup.ai_provider)
+            .unwrap_or(0) as u32,
+    );
+    let current = vaani_llm::provider(&cfg.cleanup.ai_provider).unwrap_or(&providers[0]);
+    let model = gtk4::Entry::builder()
+        .text(&cfg.cleanup.ai_model)
+        .placeholder_text(current.default_model)
+        .width_chars(26)
+        .build();
+    let base = gtk4::Entry::builder()
+        .text(&cfg.cleanup.ai_base_url)
+        .placeholder_text(current.base_url)
+        .width_chars(26)
+        .build();
+    let key = gtk4::PasswordEntry::builder()
+        .show_peek_icon(true)
+        .width_chars(26)
+        .build();
+    let key_state = label("", "row-sub");
+    let refresh_key = {
+        let key_state = key_state.clone();
+        move |p: &vaani_llm::Provider| {
+            key_state.set_text(if p.key_id.is_empty() {
+                "No key needed."
+            } else if vaani_store::secrets::get_key(p.key_id).is_some() {
+                "A key is saved in your keyring."
+            } else {
+                "No key saved yet."
+            });
+        }
+    };
+    refresh_key(current);
+    {
+        let (shared, model, base, refresh) = (
+            shared.clone(),
+            model.clone(),
+            base.clone(),
+            refresh_key.clone(),
+        );
+        provider.connect_selected_notify(move |d| {
+            if let Some(p) = providers.get(d.selected() as usize) {
+                model.set_text("");
+                model.set_placeholder_text(Some(p.default_model));
+                base.set_text("");
+                base.set_placeholder_text(Some(p.base_url));
+                update_config(&shared, |c| {
+                    c.cleanup.ai_provider = p.id.to_string();
+                    c.cleanup.ai_model.clear();
+                    c.cleanup.ai_base_url.clear();
+                });
+                refresh(p);
+            }
+        });
+    }
+    {
+        let shared = shared.clone();
+        model.connect_changed(move |e| {
+            let v = e.text().trim().to_string();
+            update_config(&shared, |c| c.cleanup.ai_model = v);
+        });
+    }
+    {
+        let shared = shared.clone();
+        base.connect_changed(move |e| {
+            let v = e.text().trim().to_string();
+            update_config(&shared, |c| c.cleanup.ai_base_url = v);
+        });
+    }
+    let save = gtk4::Button::with_label("Save key");
+    save.add_css_class("suggested-action");
+    {
+        let (shared, key, refresh) = (shared.clone(), key.clone(), refresh_key.clone());
+        save.connect_clicked(move |_| {
+            let Some(p) = vaani_llm::provider(&config(&shared).cleanup.ai_provider) else {
+                return;
+            };
+            if p.key_id.is_empty() {
+                return;
+            }
+            match vaani_store::secrets::set_key(p.key_id, key.text().trim()) {
+                Ok(()) => {
+                    key.set_text("");
+                    refresh(p);
+                }
+                Err(e) => crate::notify::send("Couldn't save the key", &e),
+            }
+        });
+    }
+    let keybox = gtk4::Box::new(Orientation::Horizontal, 8);
+    keybox.append(&key);
+    keybox.append(&save);
+    let keycol = gtk4::Box::new(Orientation::Vertical, 4);
+    keycol.append(&keybox);
+    keycol.append(&key_state);
+
+    content.append(&card(&[
+        row(
+            "Polish dictations with AI",
+            "Skipped for dictations under four words, in terminals and in code editors.",
+            &enabled,
+        ),
+        row(
+            "Provider",
+            "Groq is the fastest. A Groq key saved for speech works here too.",
+            &provider,
+        ),
+        row(
+            "API key",
+            "Stored in your system keyring, never in a file.",
+            &keycol,
+        ),
+        row("Model", "Leave empty for the suggested model.", &model),
+        row(
+            "Server address",
+            "Leave empty for the provider's own address.",
+            &base,
+        ),
+    ]));
+
+    group(&content, "Style");
+    const STYLES: &[(&str, &str)] = &[
+        ("clean", "Clean"),
+        ("formal", "Formal"),
+        ("casual", "Casual"),
+    ];
+    let style_names: Vec<&str> = STYLES.iter().map(|(_, n)| *n).collect();
+    let style = gtk4::DropDown::from_strings(&style_names);
+    style.set_selected(
+        STYLES
+            .iter()
+            .position(|(id, _)| *id == cfg.cleanup.style)
+            .unwrap_or(0) as u32,
+    );
+    {
+        let shared = shared.clone();
+        style.connect_selected_notify(move |d| {
+            let id = STYLES
+                .get(d.selected() as usize)
+                .map(|(id, _)| *id)
+                .unwrap_or("clean");
+            update_config(&shared, |c| c.cleanup.style = id.to_string());
+        });
+    }
+    let extra = gtk4::Entry::builder()
+        .text(&cfg.cleanup.ai_instruction)
+        .placeholder_text("e.g. British spelling, short sentences")
+        .width_chars(30)
+        .build();
+    {
+        let shared = shared.clone();
+        extra.connect_changed(move |e| {
+            let v = e.text().to_string();
+            update_config(&shared, |c| c.cleanup.ai_instruction = v);
+        });
+    }
+    content.append(&card(&[
+        row(
+            "Tone",
+            "Clean keeps your wording; Formal suits email; Casual suits chat.",
+            &style,
+        ),
+        row("Extra instruction", "Added to every request.", &extra),
+    ]));
+
+    group(&content, "Try It");
+    let result = label(&format!("Sample: “{SAMPLE}”"), "row-sub");
+    let try_btn = gtk4::Button::with_label("Clean Up the Sample");
+    try_btn.add_css_class("suggested-action");
+    {
+        let (shared, result) = (shared.clone(), result.clone());
+        try_btn.connect_clicked(move |b| {
+            let cfg = config(&shared);
+            let c = cfg.cleanup.clone();
+            let local_only = cfg.privacy.local_only;
+            b.set_sensitive(false);
+            result.set_text("Asking the model…");
+            let (tx, rx) = std::sync::mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                let msg = (|| {
+                    let p = vaani_llm::provider(&c.ai_provider).ok_or("Unknown provider")?;
+                    if local_only && !p.local {
+                        return Err(
+                            "“Keep everything on this computer” is on, so only Ollama can be used."
+                                .to_string(),
+                        );
+                    }
+                    let key = if p.key_id.is_empty() {
+                        String::new()
+                    } else {
+                        vaani_store::secrets::get_key(p.key_id).ok_or("Save an API key first.")?
+                    };
+                    let req = vaani_llm::Request {
+                        provider: p,
+                        base_url: &c.ai_base_url,
+                        model: &c.ai_model,
+                        api_key: &key,
+                        prompt: &c.ai_prompt,
+                        style: vaani_llm::Style::from_id(&c.style),
+                        extra: &c.ai_instruction,
+                        dictionary: &[],
+                        timeout: Duration::from_secs(10),
+                    };
+                    let t = Instant::now();
+                    let out = vaani_llm::clean(SAMPLE, &req).map_err(|e| e.to_string())?;
+                    Ok(format!("“{out}”  ({} ms)", t.elapsed().as_millis()))
+                })();
+                let _ = tx.send(msg.unwrap_or_else(|e: String| e));
+            });
+            let (b, result) = (b.clone(), result.clone());
+            glib::timeout_add_local(Duration::from_millis(100), move || match rx.try_recv() {
+                Ok(msg) => {
+                    result.set_text(&msg);
+                    b.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(_) => {
+                    b.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+            });
+        });
+    }
+    content.append(&card(&[row("Result", "", &try_btn)]));
+    result.set_margin_top(8);
+    content.append(&result);
+
+    group(&content, "Prompt");
+    let frame = gtk4::Box::new(Orientation::Vertical, 0);
+    frame.add_css_class("tryit");
+    let prompt = gtk4::TextView::builder()
+        .wrap_mode(gtk4::WrapMode::WordChar)
+        .left_margin(12)
+        .right_margin(12)
+        .top_margin(10)
+        .bottom_margin(10)
+        .monospace(true)
+        .build();
+    let shown = if cfg.cleanup.ai_prompt.trim().is_empty() {
+        vaani_llm::DEFAULT_PROMPT
+    } else {
+        cfg.cleanup.ai_prompt.as_str()
+    };
+    prompt.buffer().set_text(shown);
+    {
+        let shared = shared.clone();
+        prompt.buffer().connect_changed(move |b| {
+            let t = b.text(&b.start_iter(), &b.end_iter(), false).to_string();
+            let v = if t.trim() == vaani_llm::DEFAULT_PROMPT.trim() {
+                String::new()
+            } else {
+                t
+            };
+            update_config(&shared, |c| c.cleanup.ai_prompt = v);
+        });
+    }
+    frame.append(&prompt);
+    content.append(&frame);
+    let reset = gtk4::Button::with_label("Reset to Default");
+    reset.set_halign(Align::End);
+    reset.set_margin_top(8);
+    {
+        let prompt = prompt.clone();
+        reset.connect_clicked(move |_| prompt.buffer().set_text(vaani_llm::DEFAULT_PROMPT));
+    }
+    content.append(&reset);
     sw
 }
 

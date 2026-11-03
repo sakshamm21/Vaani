@@ -18,6 +18,7 @@ vaani-platform.workspace = true
 vaani-audio.workspace = true
 vaani-stt.workspace = true
 vaani-text.workspace = true
+vaani-llm.workspace = true
 vaani-hotkey.workspace = true
 vaani-inject.workspace = true
 vaani-store.workspace = true

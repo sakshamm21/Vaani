@@ -218,6 +218,18 @@ pub struct Cleanup {
     pub ai_timeout_ms: u64,
     /// Drop "um", "uh" and similar.
     pub remove_fillers: bool,
+    /// AI provider id: "groq", "openai", "anthropic", "ollama" or "openai_compatible".
+    pub ai_provider: String,
+    /// Empty uses the provider's default model.
+    pub ai_model: String,
+    /// Empty uses the provider's default address.
+    pub ai_base_url: String,
+    /// "clean", "formal" or "casual".
+    pub style: String,
+    /// Extra instruction added to the prompt ("British spelling").
+    pub ai_instruction: String,
+    /// Replaces the built-in prompt when not empty.
+    pub ai_prompt: String,
 }
 
 impl Default for Cleanup {
@@ -226,6 +238,12 @@ impl Default for Cleanup {
             ai_enabled: false,
             ai_timeout_ms: 1500,
             remove_fillers: true,
+            ai_provider: "groq".into(),
+            ai_model: String::new(),
+            ai_base_url: String::new(),
+            style: "clean".into(),
+            ai_instruction: String::new(),
+            ai_prompt: String::new(),
         }
     }
 }

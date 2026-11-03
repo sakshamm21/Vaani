@@ -42,6 +42,14 @@ pub enum Cmd {
         #[arg(default_value_t = 20)]
         count: usize,
     },
+    /// Run the AI clean-up on some text with your current settings, to try them out.
+    Cleanup {
+        /// The text to clean up.
+        text: Option<String>,
+        /// Clean every line of this file and report each result (for testing prompts).
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
     /// Check this computer's setup and print a report to paste into bug reports.
     Doctor {
         /// Print the report as JSON.

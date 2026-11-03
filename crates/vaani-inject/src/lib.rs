@@ -213,7 +213,8 @@ const TERMINALS: &[&str] = &[
     "cool-retro-term",
 ];
 
-fn is_terminal(class: &str) -> bool {
+/// Whether a window class (lowercase) belongs to a terminal emulator.
+pub fn is_terminal(class: &str) -> bool {
     TERMINALS.iter().any(|t| class.contains(t))
 }
 

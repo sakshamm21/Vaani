@@ -3772,6 +3772,7 @@ dependencies = [
  "vaani-core",
  "vaani-hotkey",
  "vaani-inject",
+ "vaani-llm",
  "vaani-models",
  "vaani-platform",
  "vaani-store",
@@ -3830,6 +3831,12 @@ dependencies = [
 [[package]]
 name = "vaani-llm"
 version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+]
 
 [[package]]
 name = "vaani-models"

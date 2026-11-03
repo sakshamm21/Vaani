@@ -1,5 +1,6 @@
 //! `vaani`: one binary for the background app and the command line.
 
+mod ai_cmd;
 mod autostart;
 mod cli;
 mod controller;
@@ -50,6 +51,7 @@ fn main() -> ExitCode {
         },
         Cmd::History { count } => models_cmd::history(count),
         Cmd::Doctor { json } => doctor::run(json),
+        Cmd::Cleanup { text, file } => ai_cmd::run(text, file),
     };
     match result {
         Ok(code) => code,

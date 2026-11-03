@@ -547,6 +547,70 @@ impl Job {
         }
     }
 
+    /// The optional AI pass. None keeps the rule-cleaned text (off, skipped, failed or
+    /// rejected by the guardrails).
+    fn ai_cleanup(&self, text: &str, app: &str) -> Option<String> {
+        let c = &self.config.cleanup;
+        if !c.ai_enabled {
+            return None;
+        }
+        // Terminals and code editors get exactly what was said.
+        if vaani_inject::is_terminal(app) || matches!(app, "code" | "code-oss" | "vscodium") {
+            return None;
+        }
+        let provider = vaani_llm::provider(&c.ai_provider)?;
+        if self.config.privacy.local_only && !provider.local {
+            return None;
+        }
+        let key = if provider.key_id.is_empty() {
+            String::new()
+        } else {
+            match vaani_store::secrets::get_key(provider.key_id) {
+                Some(k) => k,
+                None => {
+                    tracing::warn!(provider = provider.id, "AI clean-up has no API key");
+                    return None;
+                }
+            }
+        };
+        let dictionary: Vec<String> = self
+            .config
+            .dictionary
+            .replacements
+            .iter()
+            .map(|r| r.to.clone())
+            .collect();
+        let trailing = text.len() - text.trim_end_matches(' ').len();
+        let req = vaani_llm::Request {
+            provider,
+            base_url: &c.ai_base_url,
+            model: &c.ai_model,
+            api_key: &key,
+            prompt: &c.ai_prompt,
+            style: vaani_llm::Style::from_id(&c.style),
+            extra: &c.ai_instruction,
+            dictionary: &dictionary,
+            timeout: Duration::from_millis(c.ai_timeout_ms.clamp(300, 10_000)),
+        };
+        let t = Instant::now();
+        match vaani_llm::clean(text, &req) {
+            Ok(out) => {
+                tracing::info!(
+                    took_ms = t.elapsed().as_millis() as u64,
+                    "AI clean-up applied"
+                );
+                Some(format!("{out}{}", " ".repeat(trailing)))
+            }
+            Err(e) => {
+                tracing::info!(
+                    took_ms = t.elapsed().as_millis() as u64,
+                    "AI clean-up skipped: {e}"
+                );
+                None
+            }
+        }
+    }
+
     /// `{date}`, `{time}` and `{clipboard}` in snippets.
     fn fill_variables(&self, text: &str) -> String {
         let now = chrono::Local::now();
@@ -671,14 +735,23 @@ impl Job {
             tracing::debug!("nothing to insert");
             return;
         };
-        if text.contains('{') {
-            text = self.fill_variables(&text);
-        }
         let app = self
             .injector
             .as_ref()
             .map(|i| i.focused_app())
             .unwrap_or_default();
+        let snippet = rules
+            .snippets
+            .iter()
+            .any(|(_, body)| text.trim_end() == body.trim_end());
+        if !snippet {
+            if let Some(polished) = self.ai_cleanup(&text, &app) {
+                text = polished;
+            }
+        }
+        if text.contains('{') {
+            text = self.fill_variables(&text);
+        }
 
         // Never lose words: save before typing.
         if let Some(h) = self.history.as_ref().and_then(|h| h.lock().ok()) {
