@@ -87,6 +87,8 @@ pub struct Controller {
     down_at: Option<Instant>,
     latched: bool,
     job_cancel: Option<Arc<AtomicBool>>,
+    /// When the speaker was last heard, for the hands-free silence stop.
+    last_voice: Option<Instant>,
     tx: Sender<Input>,
 }
 
@@ -152,6 +154,7 @@ impl Controller {
             down_at: None,
             latched: false,
             job_cancel: None,
+            last_voice: None,
             tx,
         };
         c.start_hotkey();
@@ -308,12 +311,35 @@ impl Controller {
     }
 
     fn on_tick(&mut self) {
+        self.check_silence();
         if let Some(r) = &self.recording {
             if r.elapsed() > MAX_RECORDING {
                 tracing::info!(
                     "recording hit the {}-minute limit",
                     MAX_RECORDING.as_secs() / 60
                 );
+                self.command(Command::Stop);
+            }
+        }
+    }
+
+    /// Hands-free only: finish once the speaker has been quiet for the configured time.
+    fn check_silence(&mut self) {
+        let secs = self.config.audio.silence_stop_secs;
+        if secs == 0 || self.recording.is_none() || !self.latched {
+            return;
+        }
+        let rms = self.shared.level.get();
+        let db = 20.0 * rms.max(1e-6).log10();
+        let now = Instant::now();
+        // About -42 dBFS: above room noise, below quiet speech.
+        if db > -42.0 {
+            self.last_voice = Some(now);
+            return;
+        }
+        if let Some(t) = self.last_voice {
+            if now.duration_since(t) >= Duration::from_secs(u64::from(secs)) {
+                tracing::info!(secs, "silence; finishing hands-free dictation");
                 self.command(Command::Stop);
             }
         }
@@ -397,6 +423,10 @@ impl Controller {
             Effect::StartCapture => match self.recorder.start(Some(&self.config.audio.device)) {
                 Ok(r) => {
                     self.recording = Some(r);
+                    self.last_voice = None;
+                    if self.config.audio.pause_media {
+                        crate::media::pause();
+                    }
                     if let Ok(mut t) = self.shared.recording_since.lock() {
                         *t = Some(Instant::now());
                     }
@@ -410,6 +440,7 @@ impl Controller {
             },
             Effect::StopCaptureAndProcess => {
                 self.clear_recording_flags();
+                crate::media::resume();
                 crate::sounds::play(&self.config, crate::sounds::Cue::Stop);
                 match self.recording.take().map(|r| r.finish()) {
                     Some(Ok(samples)) => self.spawn_job(samples),
@@ -424,6 +455,7 @@ impl Controller {
             }
             Effect::DiscardCapture => {
                 self.clear_recording_flags();
+                crate::media::resume();
                 crate::sounds::play(&self.config, crate::sounds::Cue::Cancel);
                 if let Some(r) = self.recording.take() {
                     r.discard();

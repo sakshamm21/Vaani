@@ -150,11 +150,25 @@ impl Default for Hotkey {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Audio {
     /// Microphone name as listed in settings; empty means the system default.
     pub device: String,
+    /// Pause music and videos (MPRIS players) while recording, and resume them after.
+    pub pause_media: bool,
+    /// In hands-free mode, finish after this many seconds of silence. 0 turns it off.
+    pub silence_stop_secs: u32,
+}
+
+impl Default for Audio {
+    fn default() -> Self {
+        Self {
+            device: String::new(),
+            pause_media: true,
+            silence_stop_secs: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

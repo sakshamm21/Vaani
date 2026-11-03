@@ -8,6 +8,7 @@ mod dbus;
 mod doctor;
 mod keys;
 mod logging;
+mod media;
 mod models_cmd;
 mod notify;
 mod overlay;

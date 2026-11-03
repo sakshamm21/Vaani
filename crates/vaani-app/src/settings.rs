@@ -850,6 +850,30 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.hotkey.mode = mode);
         });
     }
+    const SILENCE: &[(u32, &str)] = &[
+        (0, "Never"),
+        (3, "After 3 s"),
+        (5, "After 5 s"),
+        (10, "After 10 s"),
+    ];
+    let silence_names: Vec<&str> = SILENCE.iter().map(|(_, n)| *n).collect();
+    let silence = gtk4::DropDown::from_strings(&silence_names);
+    silence.set_selected(
+        SILENCE
+            .iter()
+            .position(|(n, _)| *n == cfg.audio.silence_stop_secs)
+            .unwrap_or(0) as u32,
+    );
+    {
+        let shared = shared.clone();
+        silence.connect_selected_notify(move |d| {
+            let secs = SILENCE
+                .get(d.selected() as usize)
+                .map(|(n, _)| *n)
+                .unwrap_or(0);
+            update_config(&shared, |c| c.audio.silence_stop_secs = secs);
+        });
+    }
     content.append(&card(&[
         row(
             "Dictation key",
@@ -857,6 +881,11 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             &keybox,
         ),
         row("How the key works", "", &modes),
+        row(
+            "Finish hands-free on silence",
+            "Stops a hands-free dictation once you have been quiet this long.",
+            &silence,
+        ),
     ]));
 
     group(&content, "Microphone");
@@ -903,11 +932,22 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.general.overlay = v)
         })
     };
+    let pause = {
+        let shared = shared.clone();
+        switch(cfg.audio.pause_media, move |v| {
+            update_config(&shared, |c| c.audio.pause_media = v)
+        })
+    };
     content.append(&card(&[
         row(
             "Sounds",
             "Play a short tone when dictation starts and stops.",
             &s1,
+        ),
+        row(
+            "Pause music while dictating",
+            "Pauses Spotify, browsers and other players, and resumes them afterwards.",
+            &pause,
         ),
         row(
             "Floating pill",
@@ -1032,6 +1072,23 @@ fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     let radios = gtk4::Box::new(Orientation::Horizontal, 16);
     radios.append(&local);
     radios.append(&cloud);
+    cloud.set_sensitive(!cfg.privacy.local_only);
+    let local_only = {
+        let shared = shared.clone();
+        let (local, cloud) = (local.clone(), cloud.clone());
+        switch(cfg.privacy.local_only, move |v| {
+            if v {
+                local.set_active(true);
+            }
+            cloud.set_sensitive(!v);
+            update_config(&shared, |c| {
+                c.privacy.local_only = v;
+                if v {
+                    c.engine.kind = EngineKind::Local;
+                }
+            });
+        })
+    };
     let langs: Vec<&str> = LANGUAGES.iter().map(|(_, n)| *n).collect();
     let lang = gtk4::DropDown::from_strings(&langs);
     lang.set_selected(
@@ -1052,6 +1109,11 @@ fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     }
     content.append(&card(&[
         row("Where speech is turned into text", "", &radios),
+        row(
+            "Keep everything on this computer",
+            "Never send audio to a cloud service, even by mistake.",
+            &local_only,
+        ),
         row(
             "Language",
             "Used by cloud engines and Whisper. Parakeet detects its 25 languages on its own.",
