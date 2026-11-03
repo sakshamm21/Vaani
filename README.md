@@ -104,6 +104,22 @@ To check your session type, run `echo $XDG_SESSION_TYPE`. It should print `x11`.
 
 ## Installation
 
+### From a release package
+
+Download `vaani_0.1.0_amd64.deb` from the [latest release](https://github.com/sakshamm21/Vaani/releases/latest)
+and install it:
+
+```sh
+sudo apt install ./vaani_0.1.0_amd64.deb
+vaani settings
+```
+
+The release also has `vaani-0.1.0-x86_64-linux.tar.gz` for other distributions. Unpack it and
+run `./install.sh` to install under `~/.local`; it needs GTK 4 and ALSA from your distribution.
+`SHA256SUMS` lists the checksums of both files.
+
+### From source
+
 ```sh
 git clone https://github.com/sakshamm21/Vaani.git
 cd Vaani
@@ -376,7 +392,10 @@ VAANI_LOG=debug vaani run
 
 ## Updating and uninstalling
 
-To update, pull the latest changes and run the install script again. Settings, history and
+If you installed the `.deb`, install the new release's `.deb` the same way, and remove Vaani
+with `sudo apt remove vaani`.
+
+For a source install, pull the latest changes and run the install script again. Settings, history and
 models are kept.
 
 ```sh
