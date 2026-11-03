@@ -35,6 +35,9 @@ function Logs {
   Get-ChildItem "$env:LOCALAPPDATA\sakshamm21\vaani\data\logs" -ErrorAction SilentlyContinue |
     ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 80 | Write-Host }
 }
+function VaaniProcs { @(Get-CimInstance Win32_Process -Filter "Name = 'vaani.exe'") }
+function WorkerProcs { VaaniProcs | Where-Object { $_.CommandLine -match "--speech-worker" } }
+function AppProcs { VaaniProcs | Where-Object { $_.CommandLine -notmatch "--speech-worker" } }
 function Fail($msg) { Shot "failure"; Logs; throw $msg }
 # Log lines on stderr are not failures: only the exit code is.
 function Vaani {
@@ -85,6 +88,9 @@ for ($i = 0; $i -lt 90; $i++) {
 Write-Host $s
 if (-not $ready) { Fail "Vaani did not get ready: $s" }
 if (-not (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name Vaani -ErrorAction SilentlyContinue)) { Fail "no start-at-sign-in entry" }
+# The speech worker is vaani.exe started in worker mode: no second program to allow.
+if (Test-Path "$App\bin\vaani-worker.exe") { Fail "a separate vaani-worker.exe was installed" }
+if (@(AppProcs).Count -ne 1 -or @(WorkerProcs).Count -ne 1) { Fail "expected one app and one worker process" }
 Start-Sleep 2
 Shot "1-running"
 
@@ -92,7 +98,7 @@ Step "Second launch opens Settings in the running app"
 Start-Process $Exe -ArgumentList "settings"
 Start-Sleep 4
 Shot "2-settings"
-if (@(Get-Process vaani).Count -ne 1) { Fail "a second Vaani kept running" }
+if (@(AppProcs).Count -ne 1) { Fail "a second Vaani kept running" }
 
 Step "Dictate into Notepad with the hotkey (Right Ctrl)"
 $np = Start-Process notepad -PassThru
@@ -157,7 +163,6 @@ Step "Quit"
 Vaani quit | Out-Null
 Start-Sleep 3
 if (Get-Process vaani -ErrorAction SilentlyContinue) { Fail "Vaani still running after quit" }
-if (Get-Process vaani-worker -ErrorAction SilentlyContinue) { Fail "the speech worker outlived Vaani" }
 
 Step "Logs"
 Get-ChildItem "$env:LOCALAPPDATA\sakshamm21\vaani\data\logs" -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 60 }

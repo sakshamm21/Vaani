@@ -64,7 +64,6 @@ Filename: "{app}\bin\vaani.exe"; Parameters: "settings"; Description: "Open Vaan
 [UninstallRun]
 Filename: "{app}\bin\vaani.exe"; Parameters: "quit"; Flags: runhidden waituntilterminated; RunOnceId: "QuitVaani"
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /t /im vaani.exe"; Flags: runhidden waituntilterminated; RunOnceId: "KillVaani"
-Filename: "{sys}\taskkill.exe"; Parameters: "/f /im vaani-worker.exe"; Flags: runhidden waituntilterminated; RunOnceId: "KillWorker"
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

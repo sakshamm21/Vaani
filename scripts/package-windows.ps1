@@ -14,7 +14,7 @@ $Dist = "dist"
 $Stage = Join-Path $Dist "Vaani"
 
 if (-not $env:SKIP_BUILD) {
-  cargo build --release --locked -p vaani-app -p vaani-worker
+  cargo build --release --locked -p vaani-app
   if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
 
@@ -22,7 +22,7 @@ if (Test-Path $Dist) { Remove-Item -Recurse -Force $Dist }
 New-Item -ItemType Directory -Force "$Stage\bin" | Out-Null
 
 # Programs and the GTK DLLs they load (found by walking their imports).
-Copy-Item target\release\vaani.exe, target\release\vaani-worker.exe "$Stage\bin"
+Copy-Item target\release\vaani.exe "$Stage\bin"
 $Loaders = "lib\gdk-pixbuf-2.0\2.10.0"
 New-Item -ItemType Directory -Force "$Stage\$Loaders\loaders" | Out-Null
 Copy-Item "$Gtk\$Loaders\loaders\*.dll" "$Stage\$Loaders\loaders"
