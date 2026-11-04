@@ -31,6 +31,7 @@ pub struct LocalEngine {
     threads: u32,
     worker_path: PathBuf,
     worker: Option<Worker>,
+    language: String,
 }
 
 /// On Windows the worker is built into `vaani.exe`, which starts a copy of itself with this
@@ -63,7 +64,14 @@ impl LocalEngine {
             threads,
             worker_path: worker_path(),
             worker: None,
+            language: String::new(),
         }
+    }
+
+    /// The spoken language setting, so the model loads ready for it.
+    pub fn with_language(mut self, language: &str) -> Self {
+        self.language = language.to_string();
+        self
     }
 
     pub fn model(&self) -> &ModelInfo {
@@ -111,6 +119,7 @@ impl LocalEngine {
                 kind: self.model.kind,
                 dir: dir.display().to_string(),
                 threads: self.threads,
+                language: self.worker_language(&self.language),
             },
         )?;
         match protocol::read::<Response>(&mut w.rx)? {
@@ -124,6 +133,17 @@ impl LocalEngine {
         }
     }
 
+    /// The language the worker should force. Only multilingual Whisper models take one
+    /// (others detect it, or know just one language); empty means detect it.
+    fn worker_language(&self, language: &str) -> String {
+        if self.model.kind != vaani_models::ModelKind::Whisper || !self.model.is_multilingual() {
+            return String::new();
+        }
+        crate::base_language(language)
+            .unwrap_or_default()
+            .to_string()
+    }
+
     pub fn is_ready(&self) -> bool {
         self.worker.is_some()
     }
@@ -132,6 +152,7 @@ impl LocalEngine {
         if self.worker.is_none() {
             self.warm_up()?;
         }
+        let language = self.worker_language(language);
         let w = self
             .worker
             .as_mut()
@@ -140,7 +161,7 @@ impl LocalEngine {
             &mut w.tx,
             &Request::Transcribe {
                 samples: samples.to_vec(),
-                language: language.to_string(),
+                language,
             },
         )?;
         match protocol::read::<Response>(&mut w.rx)? {

@@ -15,6 +15,8 @@ pub enum Request {
         kind: ModelKind,
         dir: String,
         threads: u32,
+        /// Language to fix for Whisper; empty detects it.
+        language: String,
     },
     Transcribe {
         samples: Vec<f32>,

@@ -25,7 +25,12 @@ fn path(p: Option<std::path::PathBuf>, what: &str) -> Result<Option<String>, Str
         .ok_or_else(|| format!("model file `{what}` not found"))
 }
 
-fn load(kind: ModelKind, dir: &Path, threads: u32) -> Result<OfflineRecognizer, String> {
+fn load(
+    kind: ModelKind,
+    dir: &Path,
+    threads: u32,
+    language: &str,
+) -> Result<OfflineRecognizer, String> {
     let mut c = OfflineRecognizerConfig::default();
     c.model_config.num_threads = i32::try_from(threads).unwrap_or(4);
     c.model_config.tokens = path(find_tokens(dir), "tokens.txt")?;
@@ -42,6 +47,8 @@ fn load(kind: ModelKind, dir: &Path, threads: u32) -> Result<OfflineRecognizer, 
             c.model_config.whisper = OfflineWhisperModelConfig {
                 encoder: path(find_file(dir, "encoder"), "encoder")?,
                 decoder: path(find_file(dir, "decoder"), "decoder")?,
+                // Empty lets Whisper detect the language.
+                language: (!language.is_empty()).then(|| language.to_string()),
                 task: Some("transcribe".into()),
                 tail_paddings: -1,
                 ..Default::default()
@@ -78,6 +85,11 @@ fn serve() -> i32 {
     let mut rx = BufReader::new(std::io::stdin().lock());
     let mut tx = BufWriter::new(std::io::stdout().lock());
     let mut recognizer: Option<OfflineRecognizer> = None;
+    // What was loaded, so a Whisper model can be reloaded for another language. Whisper fixes
+    // its language when it loads; left to detect, it often writes Hindi in Urdu script or
+    // turns Hinglish into English.
+    let mut loaded: Option<(ModelKind, String, u32)> = None;
+    let mut language = String::new();
     loop {
         let req: Request = match protocol::read(&mut rx) {
             Ok(r) => r,
@@ -85,11 +97,18 @@ fn serve() -> i32 {
         };
         let resp = match req {
             Request::Shutdown => return 0,
-            Request::Load { kind, dir, threads } => {
+            Request::Load {
+                kind,
+                dir,
+                threads,
+                language: lang,
+            } => {
                 let t = Instant::now();
-                match load(kind, Path::new(&dir), threads) {
+                language = lang;
+                match load(kind, Path::new(&dir), threads, &language) {
                     Ok(r) => {
                         recognizer = Some(r);
+                        loaded = Some((kind, dir, threads));
                         Response::Loaded {
                             ms: t.elapsed().as_millis() as u64,
                         }
@@ -99,18 +118,30 @@ fn serve() -> i32 {
             }
             Request::Transcribe {
                 samples,
-                language: _,
-            } => match &recognizer {
-                None => Response::Error("no model loaded".into()),
-                Some(r) => {
-                    let t = Instant::now();
-                    let text = transcribe(r, &samples);
-                    Response::Text {
-                        text,
-                        ms: t.elapsed().as_millis() as u64,
+                language: wanted,
+            } => {
+                if let Some((ModelKind::Whisper, dir, threads)) = &loaded {
+                    if wanted != language {
+                        match load(ModelKind::Whisper, Path::new(dir), *threads, &wanted) {
+                            Ok(r) => recognizer = Some(r),
+                            // Keep the model as it was rather than fail the dictation.
+                            Err(e) => eprintln!("vaani-worker: language {wanted}: {e}"),
+                        }
+                        language = wanted;
                     }
                 }
-            },
+                match &recognizer {
+                    None => Response::Error("no model loaded".into()),
+                    Some(r) => {
+                        let t = Instant::now();
+                        let text = transcribe(r, &samples);
+                        Response::Text {
+                            text,
+                            ms: t.elapsed().as_millis() as u64,
+                        }
+                    }
+                }
+            }
         };
         if protocol::write(&mut tx, &resp).is_err() {
             return 0;
@@ -144,7 +175,7 @@ pub fn run(args: &[String]) -> i32 {
                 std::process::exit(2);
             };
             let t = Instant::now();
-            match load(model.kind, &dir, vaani_models::default_threads() as u32) {
+            match load(model.kind, &dir, vaani_models::default_threads() as u32, "") {
                 Ok(r) => {
                     let load_ms = t.elapsed().as_millis();
                     let t = Instant::now();

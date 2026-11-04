@@ -263,6 +263,34 @@ impl Recording {
     }
 }
 
+/// Roughly how many milliseconds of a 16 kHz recording are speech rather than silence,
+/// hum or the click of the hotkey. Frames of 20 ms count when they are clearly louder than
+/// the recording's own quiet parts; the first and last 100 ms, where key clicks land, are
+/// left out of longer recordings.
+pub fn voiced_ms(samples: &[f32]) -> u32 {
+    const FRAME: usize = 320;
+    const EDGE: usize = 1_600;
+    let body = if samples.len() > 4 * EDGE + FRAME {
+        &samples[EDGE..samples.len() - EDGE]
+    } else {
+        samples
+    };
+    let rms: Vec<f32> = body
+        .chunks_exact(FRAME)
+        .map(|f| (f.iter().map(|v| v * v).sum::<f32>() / FRAME as f32).sqrt())
+        .collect();
+    if rms.is_empty() {
+        return 0;
+    }
+    let mut sorted = rms.clone();
+    sorted.sort_by(f32::total_cmp);
+    let floor = sorted[sorted.len() / 10];
+    // Three times the background, but never so high that ordinary speech misses it.
+    let threshold = (floor * 3.0).clamp(0.004, 0.02);
+    let frames = rms.iter().filter(|r| **r > threshold).count();
+    (frames * 20) as u32
+}
+
 pub fn resample(mono: &[f32], rate: u32) -> Result<Vec<f32>, AudioError> {
     if rate == TARGET_RATE || mono.is_empty() {
         return Ok(mono.to_vec());
@@ -304,6 +332,26 @@ pub fn wav_bytes(samples: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tone(ms: usize, amp: f32) -> Vec<f32> {
+        (0..ms * 16).map(|i| amp * (i as f32 * 0.1).sin()).collect()
+    }
+
+    #[test]
+    fn voiced_time() {
+        // Silence with a key click at each end.
+        let mut tap = tone(30, 0.3);
+        tap.extend(tone(400, 0.001));
+        tap.extend(tone(30, 0.3));
+        assert!(voiced_ms(&tap) < 100, "{}", voiced_ms(&tap));
+        assert_eq!(voiced_ms(&[]), 0);
+        // A word between two pauses.
+        let mut word = tone(300, 0.002);
+        word.extend(tone(400, 0.1));
+        word.extend(tone(300, 0.002));
+        let v = voiced_ms(&word);
+        assert!((300..=420).contains(&v), "{v}");
+    }
 
     #[test]
     fn resample_48k_to_16k_keeps_duration() {
