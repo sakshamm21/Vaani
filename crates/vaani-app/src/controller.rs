@@ -40,11 +40,6 @@ misheard from context";
 fn is_hinglish(language: &str) -> bool {
     language.eq_ignore_ascii_case(vaani_stt::HINGLISH)
 }
-
-/// Hindi or Hinglish.
-fn is_hindi(language: &str) -> bool {
-    vaani_stt::base_language(language) == Some("hi")
-}
 /// Stop recording automatically after this long.
 /// Long dictations are transcribed in pieces while the speaker talks, cut at pauses, so the
 /// wait after the key is released stays short. A piece is at least this long.
@@ -403,13 +398,6 @@ impl Controller {
             n => n,
         };
         let language = self.config.general.language.clone();
-        if is_hindi(&language) && !model.understands_hindi() {
-            crate::notify::send(
-                &format!("{} doesn't understand Hindi", model.name),
-                "For Hindi or Hinglish, pick a Whisper model (Small or Large v3 Turbo) or a \
-                 cloud engine in Vaani settings.",
-            );
-        }
         self.set_engine(EngineStatus::Loading(model.name.clone()));
         let _ = thread::Builder::new().name("engine-load".into()).spawn(move || {
             let mut engine = LocalEngine::new(model.clone(), threads).with_language(&language);

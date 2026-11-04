@@ -11,7 +11,7 @@ kind = "nemo_transducer"
 archive = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 sha256 = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
 download_mb = 465
-languages = "English and 24 European languages"
+languages = "English and 24 European languages (no Hindi or Hinglish)"
 notes = "Best accuracy and speed on CPU."
 recommended = true
 
@@ -52,7 +52,7 @@ kind = "whisper"
 archive = "sherpa-onnx-whisper-tiny"
 sha256 = "c46116994e539aa165266d96b325252728429c12535eb9d8b6a2b10f129e66b1"
 download_mb = 111
-languages = "99 languages, including Hindi"
+languages = "99 languages, including Hindi and Hinglish"
 notes = "Tiny multilingual Whisper."
 
 [[model]]
@@ -62,7 +62,7 @@ kind = "whisper"
 archive = "sherpa-onnx-whisper-base"
 sha256 = "911b2083efd7c0dca2ac3b358b75222660dc09fb716d64fbfc417ba6c99ff3de"
 download_mb = 198
-languages = "99 languages, including Hindi"
+languages = "99 languages, including Hindi and Hinglish"
 
 [[model]]
 id = "whisper-small"
@@ -71,7 +71,7 @@ kind = "whisper"
 archive = "sherpa-onnx-whisper-small"
 sha256 = "486a46afbb7ba798507190ffe02fea2dd726049af212e774537efac6afb210a6"
 download_mb = 610
-languages = "99 languages, including Hindi"
+languages = "99 languages, including Hindi and Hinglish"
 notes = "Good multilingual balance."
 
 [[model]]
@@ -81,7 +81,7 @@ kind = "whisper"
 archive = "sherpa-onnx-whisper-turbo"
 sha256 = "b11acbbcd660b44a8e0df33724feb5aaa709cf65668f2823d59f656312544f22"
 download_mb = 538
-languages = "99 languages, including Hindi"
+languages = "99 languages, including Hindi and Hinglish"
 notes = "Best multilingual accuracy; slower on CPU."
 
 [[model]]
@@ -101,7 +101,7 @@ kind = "whisper"
 archive = "sherpa-onnx-whisper-medium"
 sha256 = "614b1172557049069d846c29d9399640bce83a4dd6c580decebd9ce2a4f32c33"
 download_mb = 1842
-languages = "99 languages, including Hindi"
+languages = "99 languages, including Hindi and Hinglish"
 
 [[model]]
 id = "whisper-large-v3"
@@ -110,7 +110,7 @@ kind = "whisper"
 archive = "sherpa-onnx-whisper-large-v3"
 sha256 = "2d0e134b3b5fc4a0533baf24a0c9d473b629aa47f030af0a165a05f461df7a03"
 download_mb = 1019
-languages = "99 languages, including Hindi"
+languages = "99 languages, including Hindi and Hinglish"
 notes = "Highest accuracy; needs a fast CPU."
 
 [[model]]

@@ -57,11 +57,6 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
-    /// Whether the model understands Hindi (and so Hinglish).
-    pub fn understands_hindi(&self) -> bool {
-        self.languages.contains("Hindi")
-    }
-
     /// Whether the model knows many languages (and takes a language hint).
     pub fn is_multilingual(&self) -> bool {
         self.languages.contains("99 languages")
