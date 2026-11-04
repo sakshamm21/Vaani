@@ -109,6 +109,13 @@ jobs:
           Expand-Archive (Get-ChildItem dist\*-portable.zip).FullName $env:RUNNER_TEMP\portable
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           & "$env:RUNNER_TEMP\portable\Vaani\bin\vaani.exe" --version | Out-String
+      - name: Store package installs, starts and dictates
+        shell: powershell
+        run: ./scripts/windows-msix-test.ps1 -Msix (Get-ChildItem dist\*.msix).FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: store-package
+          path: dist/*.msix
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -10,6 +10,10 @@ pub const APP_ID: &str = "io.github.sakshamm21.Vaani";
 /// the portable zip (no Start menu shortcut).
 #[cfg(windows)]
 pub fn register() {
+    // The Store package registers its own app ID.
+    if crate::packaged::app_id().is_some() {
+        return;
+    }
     let icon = std::env::current_exe()
         .ok()
         .and_then(|e| e.parent()?.parent().map(|d| d.join("vaani.ico")))
@@ -35,7 +39,8 @@ pub fn send(summary: &str, body: &str) {
     let _ = std::thread::Builder::new()
         .name("notify".into())
         .spawn(move || {
-            let r = tauri_winrt_notification::Toast::new(APP_ID)
+            let id = crate::packaged::app_id().unwrap_or(APP_ID);
+            let r = tauri_winrt_notification::Toast::new(id)
                 .title(&summary)
                 .text1(&body)
                 .show();

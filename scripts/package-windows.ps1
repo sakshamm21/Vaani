@@ -2,9 +2,10 @@
 #   vaani-<version>-windows-x64-setup.exe     installer (per user, no administrator rights)
 #   vaani-<version>-windows-x64-portable.zip  the same files, run bin\vaani.exe
 #   SHA256SUMS-windows
+#   vaani-<version>-windows-x64.msix          Microsoft Store package (uploaded to Partner Center)
 #
 # Needs: Rust (MSVC), the gvsbuild GTK 4 bundle in $env:GTK_DIR (default
-# C:\gtk-build\gtk\x64\release), Python with pefile, and Inno Setup 6 (iscc).
+# C:\gtk-build\gtk\x64\release), Python with pefile, Inno Setup 6 (iscc) and the Windows SDK (makeappx).
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
@@ -62,6 +63,33 @@ $Iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
 if (-not $Iscc) { $Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
 & $Iscc /Q "/DAppVersion=$Version" packaging\windows\vaani.iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+# Microsoft Store package (MSIX). The Store signs it; the identity comes from Partner Center
+# (packaging\windows\store-identity.txt, or VAANI_MSIX_* for a local test build).
+$Ident = @{ NAME = "Vaani.Test"; PUBLISHER = "CN=Vaani Test"; PUBLISHER_NAME = "Vaani" }
+$IdFile = "packaging\windows\store-identity.txt"
+if (Test-Path $IdFile) {
+  Get-Content $IdFile | Where-Object { $_ -match '^\s*(NAME|PUBLISHER|PUBLISHER_NAME)\s*=\s*(.+?)\s*$' } |
+    ForEach-Object { $Ident[$Matches[1]] = $Matches[2] }
+}
+foreach ($k in @($Ident.Keys)) {
+  $v = [Environment]::GetEnvironmentVariable("VAANI_MSIX_$k")
+  if ($v) { $Ident[$k] = $v }
+}
+$Msix = "$Dist\msix"
+Copy-Item -Recurse $Stage $Msix
+New-Item -ItemType Directory -Force "$Msix\Assets" | Out-Null
+Copy-Item assets\windows\store\*.png "$Msix\Assets"
+$Manifest = (Get-Content -Raw packaging\windows\AppxManifest.xml).
+  Replace("@NAME@", $Ident.NAME).Replace("@PUBLISHER@", $Ident.PUBLISHER).
+  Replace("@PUBLISHER_NAME@", $Ident.PUBLISHER_NAME).Replace("@VERSION@", $Version)
+[IO.File]::WriteAllText((Resolve-Path $Msix).Path + "\AppxManifest.xml", $Manifest)
+$MakeAppx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" |
+  Sort-Object FullName -Descending | Select-Object -First 1
+if (-not $MakeAppx) { throw "makeappx.exe not found (install the Windows SDK)" }
+& $MakeAppx.FullName pack /o /h SHA256 /d $Msix /p "$Dist\vaani-$Version-windows-x64.msix" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "makeappx failed" }
+Remove-Item -Recurse -Force $Msix
 
 Push-Location $Dist
 Get-ChildItem *.exe, *.zip | ForEach-Object {

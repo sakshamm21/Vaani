@@ -51,10 +51,13 @@ tray-icon.workspace = true
 tauri-winrt-notification.workspace = true
 windows-registry.workspace = true
 windows = { workspace = true, features = [
+    "ApplicationModel",
+    "ApplicationModel_Activation",
     "Foundation",
     "Foundation_Collections",
     "Media_Control",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Console",
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
