@@ -10,7 +10,7 @@
   IgnorableNamespaces="uap uap5 desktop rescap">
   <Identity Name="@NAME@" Publisher="@PUBLISHER@" Version="@VERSION@.0" ProcessorArchitecture="x64" />
   <Properties>
-    <DisplayName>Vaani</DisplayName>
+    <DisplayName>@DISPLAY_NAME@</DisplayName>
     <PublisherDisplayName>@PUBLISHER_NAME@</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -24,7 +24,7 @@
     <!-- Started with no arguments: from the Start menu it opens Settings, at sign-in (the
          StartupTask) and from the `vaani` command it runs in the background. -->
     <Application Id="Vaani" Executable="bin\vaani.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="Vaani"
+      <uap:VisualElements DisplayName="@DISPLAY_NAME@"
         Description="Voice dictation: hold a key, speak, and your words appear in any app."
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"

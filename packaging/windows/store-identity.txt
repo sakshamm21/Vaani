@@ -1,0 +1,6 @@
+# Microsoft Store identity, from Partner Center > Product identity.
+NAME = SakshamMalhotra.VaaniDictation
+PUBLISHER = CN=8DB37079-FA46-457E-97BB-5DA6F3A48EAF
+PUBLISHER_NAME = Saksham Malhotra
+# Must match the app name reserved in Partner Center.
+DISPLAY_NAME = Vaani Dictation

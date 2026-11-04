@@ -66,10 +66,10 @@ if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
 
 # Microsoft Store package (MSIX). The Store signs it; the identity comes from Partner Center
 # (packaging\windows\store-identity.txt, or VAANI_MSIX_* for a local test build).
-$Ident = @{ NAME = "Vaani.Test"; PUBLISHER = "CN=Vaani Test"; PUBLISHER_NAME = "Vaani" }
+$Ident = @{ NAME = "Vaani.Test"; PUBLISHER = "CN=Vaani Test"; PUBLISHER_NAME = "Vaani"; DISPLAY_NAME = "Vaani" }
 $IdFile = "packaging\windows\store-identity.txt"
 if (Test-Path $IdFile) {
-  Get-Content $IdFile | Where-Object { $_ -match '^\s*(NAME|PUBLISHER|PUBLISHER_NAME)\s*=\s*(.+?)\s*$' } |
+  Get-Content $IdFile | Where-Object { $_ -match '^\s*(NAME|PUBLISHER|PUBLISHER_NAME|DISPLAY_NAME)\s*=\s*(.+?)\s*$' } |
     ForEach-Object { $Ident[$Matches[1]] = $Matches[2] }
 }
 foreach ($k in @($Ident.Keys)) {
@@ -82,7 +82,8 @@ New-Item -ItemType Directory -Force "$Msix\Assets" | Out-Null
 Copy-Item assets\windows\store\*.png "$Msix\Assets"
 $Manifest = (Get-Content -Raw packaging\windows\AppxManifest.xml).
   Replace("@NAME@", $Ident.NAME).Replace("@PUBLISHER@", $Ident.PUBLISHER).
-  Replace("@PUBLISHER_NAME@", $Ident.PUBLISHER_NAME).Replace("@VERSION@", $Version)
+  Replace("@PUBLISHER_NAME@", $Ident.PUBLISHER_NAME).Replace("@DISPLAY_NAME@", $Ident.DISPLAY_NAME).
+  Replace("@VERSION@", $Version)
 [IO.File]::WriteAllText((Resolve-Path $Msix).Path + "\AppxManifest.xml", $Manifest)
 $MakeAppx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" |
   Sort-Object FullName -Descending | Select-Object -First 1
