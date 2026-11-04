@@ -13,6 +13,8 @@ using System;
 using System.Runtime.InteropServices;
 public static class Keys {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   public static void Chord(byte mod, byte vk) { keybd_event(mod, 0, 0, UIntPtr.Zero); keybd_event(vk, 0, 0, UIntPtr.Zero); keybd_event(vk, 0, 2, UIntPtr.Zero); keybd_event(mod, 0, 2, UIntPtr.Zero); }
 }
 "@
@@ -22,6 +24,25 @@ function Logs {
     Get-ChildItem | ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName -Tail 60 | Write-Host }
 }
 function Fail($msg) { Logs; throw $msg }
+
+# Bring Notepad to the front and make sure it stays there: a window that opened just before
+# (the Settings window) can keep the focus, and Windows refuses SetForegroundWindow from a
+# background process unless it just sent input (a Shift tap, which Notepad ignores).
+function Focus($proc) {
+  for ($i = 0; $i -lt 20; $i++) {
+    $proc.Refresh()
+    $h = $proc.MainWindowHandle
+    if ($h -ne [IntPtr]::Zero) {
+      [Keys]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero); [Keys]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+      [Keys]::SetForegroundWindow($h) | Out-Null
+      (New-Object -ComObject WScript.Shell).AppActivate($proc.Id) | Out-Null
+      Start-Sleep -Milliseconds 300
+      if ([Keys]::GetForegroundWindow() -eq $h) { Start-Sleep -Milliseconds 500; return }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  Fail "could not bring Notepad to the front"
+}
 function Vaani {
   $ErrorActionPreference = "Continue"
   $out = & $script:Alias @args 2>&1 | ForEach-Object { "$_" } | Out-String
@@ -99,9 +120,8 @@ WaitReady
 
 Step "Dictate into Notepad"
 $np = Start-Process notepad -PassThru
-Start-Sleep 3
-(New-Object -ComObject WScript.Shell).AppActivate($np.Id) | Out-Null
-Start-Sleep 1
+Start-Sleep 2
+Focus $np
 Vaani start | Out-Null
 Start-Sleep 1
 Vaani stop | Out-Null

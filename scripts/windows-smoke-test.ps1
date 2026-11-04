@@ -17,6 +17,7 @@ using System.Runtime.InteropServices;
 public static class Keys {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   public static void Down(byte vk, byte scan, bool ext) { keybd_event(vk, scan, ext ? 1u : 0u, UIntPtr.Zero); }
   public static void Up(byte vk, byte scan, bool ext) { keybd_event(vk, scan, (ext ? 1u : 0u) | 2u, UIntPtr.Zero); }
 }
@@ -39,6 +40,25 @@ function VaaniProcs { @(Get-CimInstance Win32_Process -Filter "Name = 'vaani.exe
 function WorkerProcs { VaaniProcs | Where-Object { $_.CommandLine -match "--speech-worker" } }
 function AppProcs { VaaniProcs | Where-Object { $_.CommandLine -notmatch "--speech-worker" } }
 function Fail($msg) { Shot "failure"; Logs; throw $msg }
+
+# Bring Notepad to the front and make sure it stays there: a window that opened just before
+# (the Settings window) can keep the focus, and Windows refuses SetForegroundWindow from a
+# background process unless it just sent input (a Shift tap, which Notepad ignores).
+function Focus($proc) {
+  for ($i = 0; $i -lt 20; $i++) {
+    $proc.Refresh()
+    $h = $proc.MainWindowHandle
+    if ($h -ne [IntPtr]::Zero) {
+      [Keys]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero); [Keys]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+      [Keys]::SetForegroundWindow($h) | Out-Null
+      (New-Object -ComObject WScript.Shell).AppActivate($proc.Id) | Out-Null
+      Start-Sleep -Milliseconds 300
+      if ([Keys]::GetForegroundWindow() -eq $h) { Start-Sleep -Milliseconds 500; return }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  Fail "could not bring Notepad to the front"
+}
 # Log lines on stderr are not failures: only the exit code is.
 function Vaani {
   $ErrorActionPreference = "Continue"
@@ -102,11 +122,8 @@ if (@(AppProcs).Count -ne 1) { Fail "a second Vaani kept running" }
 
 Step "Dictate into Notepad with the hotkey (Right Ctrl)"
 $np = Start-Process notepad -PassThru
-Start-Sleep 3
-$np.Refresh()
-[Keys]::SetForegroundWindow($np.MainWindowHandle) | Out-Null
-(New-Object -ComObject WScript.Shell).AppActivate($np.Id) | Out-Null
-Start-Sleep 1
+Start-Sleep 2
+Focus $np
 Set-Clipboard -Value "the user's clipboard"
 [Keys]::Down(0xA3, 0x1D, $true)
 Start-Sleep -Milliseconds 1500
@@ -137,10 +154,8 @@ Stop-Process $np -Force
 
 Step "CLI toggle into Notepad"
 $np = Start-Process notepad -PassThru
-Start-Sleep 3
-$np.Refresh()
-(New-Object -ComObject WScript.Shell).AppActivate($np.Id) | Out-Null
-Start-Sleep 1
+Start-Sleep 2
+Focus $np
 Vaani start | Out-Null
 Start-Sleep 1
 Vaani stop | Out-Null
