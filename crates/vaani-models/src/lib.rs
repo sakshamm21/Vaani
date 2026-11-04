@@ -57,6 +57,11 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
+    /// Whether the model knows many languages (and takes a language hint).
+    pub fn is_multilingual(&self) -> bool {
+        self.languages.contains("99 languages")
+    }
+
     pub fn url(&self) -> String {
         self.url
             .clone()

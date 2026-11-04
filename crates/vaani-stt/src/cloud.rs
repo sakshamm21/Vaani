@@ -94,6 +94,8 @@ pub struct CloudEngine {
     pub base_url: String,
     pub model: String,
     pub api_key: String,
+    /// The user's Dictionary words, sent as hints where the API takes them.
+    pub vocabulary: Vec<String>,
     client: reqwest::blocking::Client,
 }
 
@@ -124,6 +126,7 @@ impl CloudEngine {
                 model.into()
             },
             api_key: api_key.into(),
+            vocabulary: Vec::new(),
             client,
         })
     }
@@ -136,6 +139,10 @@ impl SttEngine for CloudEngine {
 
     fn is_cloud(&self) -> bool {
         true
+    }
+
+    fn set_vocabulary(&mut self, words: &[String]) {
+        self.vocabulary = words.to_vec();
     }
 
     fn warm(&mut self) {
@@ -161,10 +168,15 @@ impl SttEngine for CloudEngine {
     fn transcribe(&mut self, samples: &[f32], language: &str) -> Result<Transcript, SttError> {
         let t = Instant::now();
         let wav = wav_16k(samples);
-        let lang = (!language.is_empty() && language != "auto").then_some(language);
+        let hinglish = language.eq_ignore_ascii_case(crate::HINGLISH);
+        let lang = crate::base_language(language);
         let text = match self.provider.api {
-            Api::OpenAi => self.openai(wav, lang)?,
+            Api::OpenAi => self.openai(wav, lang, &crate::prompt(language, &self.vocabulary))?,
+            // Nova-3 understands Hindi and English mixed in one sentence as "multi".
+            Api::Deepgram if hinglish => self.deepgram(wav, Some("multi"))?,
             Api::Deepgram => self.deepgram(wav, lang)?,
+            // Scribe handles mixed speech best when it detects the languages itself.
+            Api::ElevenLabs if hinglish => self.elevenlabs(wav, None)?,
             Api::ElevenLabs => self.elevenlabs(wav, lang)?,
             Api::AssemblyAi => self.assemblyai(wav, lang)?,
             Api::Sarvam => self.sarvam(wav, lang)?,
@@ -225,6 +237,18 @@ impl CloudEngine {
         match lang {
             Some(l) => query.push(("language", l)),
             None => query.push(("detect_language", "true")),
+        }
+        // Nova-3 takes the user's own words as key terms.
+        if self.model.starts_with("nova-3") {
+            for w in self
+                .vocabulary
+                .iter()
+                .map(|w| w.trim())
+                .filter(|w| !w.is_empty())
+                .take(50)
+            {
+                query.push(("keyterm", w));
+            }
         }
         let body = self.call(
             self.client
@@ -324,13 +348,16 @@ impl CloudEngine {
         Ok(str_at(&body, "/transcript"))
     }
 
-    fn openai(&self, wav: Vec<u8>, lang: Option<&str>) -> Result<String, SttError> {
+    fn openai(&self, wav: Vec<u8>, lang: Option<&str>, prompt: &str) -> Result<String, SttError> {
         let mut form = reqwest::blocking::multipart::Form::new()
             .part("file", wav_part(wav)?)
             .text("model", self.model.clone())
             .text("response_format", "json");
         if let Some(l) = lang {
             form = form.text("language", l.to_string());
+        }
+        if !prompt.is_empty() {
+            form = form.text("prompt", prompt.to_string());
         }
         let mut req = self
             .client

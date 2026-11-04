@@ -79,7 +79,8 @@ impl Default for Config {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct General {
-    /// Spoken language: "auto" or a BCP-47 code such as "en", "hi".
+    /// Spoken language: "auto", a BCP-47 code such as "en", "hi", or "hinglish" for Hindi
+    /// mixed with English, written in Latin letters.
     pub language: String,
     /// How Hindi is written: "devanagari" as the model writes it, or "latin" for
     /// Hinglish spelling ("aap kaise ho").
@@ -315,6 +316,21 @@ pub struct Insert {
     pub restore_clipboard: bool,
     /// Add a space after each dictation so the next one doesn't run into it.
     pub trailing_space: bool,
+    /// When a dictation ends with a full stop.
+    pub full_stop: FullStop,
+}
+
+/// Whether a dictation keeps the full stop speech models put at its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FullStop {
+    /// Leave it off a single sentence or fragment; keep it when there are several sentences.
+    #[default]
+    Smart,
+    /// Always, as the speech model writes it.
+    Always,
+    /// Never end with a full stop.
+    Never,
 }
 
 impl Default for Insert {
@@ -323,6 +339,7 @@ impl Default for Insert {
             method: InsertMethod::Auto,
             restore_clipboard: true,
             trailing_space: true,
+            full_stop: FullStop::Smart,
         }
     }
 }

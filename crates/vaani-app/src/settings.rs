@@ -22,6 +22,7 @@ use crate::keys::{pretty, shortcut};
 const LANGUAGES: &[(&str, &str)] = &[
     ("auto", "Detect automatically"),
     ("en", "English"),
+    ("hinglish", "Hinglish (Hindi + English)"),
     ("hi", "Hindi"),
     ("es", "Spanish"),
     ("fr", "French"),
@@ -1458,11 +1459,40 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.insert.trailing_space = v)
         })
     };
+    use vaani_core::config::FullStop;
+    const STOPS: &[(FullStop, &str)] = &[
+        (FullStop::Smart, "Only after several sentences"),
+        (FullStop::Always, "Always"),
+        (FullStop::Never, "Never"),
+    ];
+    let stop_names: Vec<&str> = STOPS.iter().map(|(_, n)| *n).collect();
+    let stop = gtk4::DropDown::from_strings(&stop_names);
+    stop.set_selected(
+        STOPS
+            .iter()
+            .position(|(m, _)| *m == cfg.insert.full_stop)
+            .unwrap_or(0) as u32,
+    );
+    {
+        let shared = shared.clone();
+        stop.connect_selected_notify(move |d| {
+            let m = STOPS
+                .get(d.selected() as usize)
+                .map(|(m, _)| *m)
+                .unwrap_or_default();
+            update_config(&shared, |c| c.insert.full_stop = m);
+        });
+    }
     content.append(&card(&[
         row(
             "Remove filler words",
             "Remove \"um\", \"uh\" and similar words.",
             &s3,
+        ),
+        row(
+            "End with a full stop",
+            "Short messages read better without one. Saying \"full stop\" always adds it.",
+            &stop,
         ),
         row(
             "Add a space after each dictation",
@@ -1626,12 +1656,12 @@ fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         ),
         row(
             "Language",
-            "Used by cloud engines and Whisper. Parakeet detects its 25 languages on its own.",
+            "Used by cloud engines and Whisper. For Hindi or Hinglish, use a Whisper model or a cloud engine; Parakeet and Moonshine don't understand Hindi.",
             &lang,
         ),
         row(
             "Write Hindi in",
-            "Speech models write Hindi in Devanagari; Latin turns it into Hinglish spelling.",
+            "Speech models write Hindi in Devanagari; Latin turns it into Hinglish spelling. Hinglish always uses Latin.",
             &script,
         ),
     ]));

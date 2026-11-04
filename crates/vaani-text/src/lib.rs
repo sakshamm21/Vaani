@@ -6,7 +6,11 @@ pub mod hindi;
 const HALLUCINATIONS: &[&str] = &[
     "thank you.",
     "thanks for watching.",
+    "thanks for watching!",
     "thank you for watching.",
+    "thank you for watching!",
+    "please subscribe.",
+    "like and subscribe.",
     "you",
     "bye.",
     ".",
@@ -15,8 +19,54 @@ const HALLUCINATIONS: &[&str] = &[
     "[music]",
     "(music)",
     "[silence]",
+    "[ silence ]",
+    "(silence)",
+    "[no speech]",
     "subtitles by the amara.org community",
+    "धन्यवाद।",
 ];
+
+/// Short words models also invent from a key click or a breath ("Yeah.", "You", "Okay.").
+/// They are real words, so they are only dropped when the recording held almost no speech;
+/// see [`is_phantom`].
+const PHANTOMS: &[&str] = &[
+    "yeah",
+    "yes",
+    "yep",
+    "you",
+    "okay",
+    "ok",
+    "so",
+    "oh",
+    "ah",
+    "uh",
+    "um",
+    "hmm",
+    "mm",
+    "mhm",
+    "mm-hmm",
+    "uh-huh",
+    "right",
+    "bye",
+    "hi",
+    "i",
+    "the",
+    "and",
+    "thanks",
+    "thank you",
+    "thank you so much",
+    "हाँ",
+    "हां",
+];
+
+/// True when the whole transcript is one of the short words models invent from noise.
+pub fn is_phantom(raw: &str) -> bool {
+    let bare = raw
+        .trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation() || c == '।' || c.is_whitespace())
+        .to_lowercase();
+    PHANTOMS.contains(&bare.as_str())
+}
 
 const FILLERS: &[&str] = &["um", "uh", "erm", "uhm", "hmm", "mm"];
 
@@ -27,6 +77,8 @@ pub struct Rules {
     pub trailing_space: bool,
     /// Turn "new line", "comma", "full stop" and similar into what they say.
     pub spoken_commands: bool,
+    /// When the dictation ends with a full stop.
+    pub full_stop: FullStop,
     /// Whole-word replacements, matched without regard to case: (heard, written).
     pub replacements: Vec<(String, String)>,
     /// Trigger phrase -> saved text. Saying only the trigger inserts just the text.
@@ -39,10 +91,53 @@ impl Default for Rules {
             remove_fillers: true,
             trailing_space: true,
             spoken_commands: true,
+            full_stop: FullStop::Smart,
             replacements: Vec::new(),
             snippets: Vec::new(),
         }
     }
+}
+
+/// Whether a dictation keeps the full stop the speech model puts at its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FullStop {
+    /// Leave it off a single sentence or a fragment ("sounds good"), keep it when the
+    /// dictation has several sentences.
+    #[default]
+    Smart,
+    /// Keep whatever the model wrote.
+    Keep,
+    /// Never end with a full stop.
+    Never,
+}
+
+/// True when the speaker ended the dictation by saying "full stop" themselves.
+pub fn ends_with_spoken_stop(raw: &str) -> bool {
+    let words: Vec<String> = raw.split_whitespace().rev().take(2).map(bare).collect();
+    words.len() == 2 && words[0] == "stop" && words[1] == "full"
+}
+
+/// Apply the full-stop setting to the end of `text`, keeping trailing whitespace as it is.
+/// `spoken` means the speaker said "full stop", which is always kept. Question marks,
+/// exclamation marks and ellipses are never touched.
+pub fn apply_full_stop(text: &str, mode: FullStop, spoken: bool) -> String {
+    let body = text.trim_end();
+    let tail = &text[body.len()..];
+    if spoken || mode == FullStop::Keep || body.ends_with("..") || body.ends_with('…') {
+        return text.to_string();
+    }
+    let Some(stem) = body.strip_suffix('.').or_else(|| body.strip_suffix('।')) else {
+        return text.to_string();
+    };
+    if mode == FullStop::Smart {
+        let several = stem.contains('\n')
+            || stem.contains('।')
+            || [". ", "? ", "! "].iter().any(|b| stem.contains(b));
+        if several {
+            return text.to_string();
+        }
+    }
+    format!("{}{tail}", stem.trim_end())
 }
 
 /// Spoken commands, longest first. Punctuation attaches to the previous word.
@@ -216,6 +311,11 @@ pub fn clean(raw: &str, rules: &Rules) -> Option<String> {
     if rules.spoken_commands {
         text = apply_commands(&text);
     }
+    text = apply_full_stop(
+        &text,
+        rules.full_stop,
+        rules.spoken_commands && ends_with_spoken_stop(raw),
+    );
     if !rules.replacements.is_empty() {
         text = apply_replacements(&text, &rules.replacements);
     }
@@ -279,6 +379,7 @@ mod tests {
             &Rules {
                 remove_fillers: true,
                 trailing_space: false,
+                full_stop: FullStop::Keep,
                 ..Rules::default()
             },
         )
@@ -310,6 +411,7 @@ mod tests {
     fn replacements() {
         let r = Rules {
             trailing_space: false,
+            full_stop: FullStop::Keep,
             replacements: vec![
                 ("vani".into(), "Vaani".into()),
                 ("my email".into(), "sak@example.com".into()),
@@ -347,6 +449,49 @@ mod tests {
     }
 
     #[test]
+    fn phantom_words() {
+        assert!(is_phantom("Yeah."));
+        assert!(is_phantom(" you "));
+        assert!(is_phantom("Thank you!"));
+        assert!(!is_phantom("Yeah, let's do it."));
+    }
+
+    #[test]
+    fn full_stop_modes() {
+        let r = |mode| Rules {
+            trailing_space: true,
+            full_stop: mode,
+            ..Rules::default()
+        };
+        let smart = r(FullStop::Smart);
+        assert_eq!(clean("sounds good.", &smart), Some("Sounds good ".into()));
+        assert_eq!(
+            clean("I'll be late. Start without me.", &smart),
+            Some("I'll be late. Start without me. ".into())
+        );
+        assert_eq!(
+            clean("Are you coming?", &smart),
+            Some("Are you coming? ".into())
+        );
+        assert_eq!(
+            clean("Wait for it...", &smart),
+            Some("Wait for it... ".into())
+        );
+        assert_eq!(
+            clean("that is all full stop", &smart),
+            Some("That is all. ".into())
+        );
+        assert_eq!(clean("ठीक है।", &smart), Some("ठीक है ".into()));
+        let never = r(FullStop::Never);
+        assert_eq!(
+            clean("I'll be late. Start without me.", &never),
+            Some("I'll be late. Start without me ".into())
+        );
+        let keep = r(FullStop::Keep);
+        assert_eq!(clean("sounds good.", &keep), Some("Sounds good. ".into()));
+    }
+
+    #[test]
     fn trailing_space() {
         assert_eq!(clean("hi", &Rules::default()), Some("Hi ".into()));
     }
@@ -368,6 +513,7 @@ mod tests {
         let rules = Rules {
             snippets: vec![("my address".into(), "12 Park Street\nDelhi".into())],
             trailing_space: false,
+            full_stop: FullStop::Keep,
             ..Rules::default()
         };
         assert_eq!(

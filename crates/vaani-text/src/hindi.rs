@@ -149,7 +149,54 @@ fn letters(word: &str) -> Vec<Letter> {
     out
 }
 
+/// Everyday words whose chat spelling the letter-by-letter rules can't guess.
+fn common(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "नहीं" | "नही" => "nahi",
+        "में" => "mein",
+        "मैंने" => "maine",
+        "यह" => "yeh",
+        "वह" => "woh",
+        "ये" => "ye",
+        "वो" => "wo",
+        "क्यों" => "kyun",
+        "क्योंकि" => "kyunki",
+        "कुछ" => "kuch",
+        "अच्छा" => "accha",
+        "अच्छी" => "acchi",
+        "अच्छे" => "acche",
+        "वाला" => "wala",
+        "वाली" => "wali",
+        "वाले" => "wale",
+        "वहाँ" | "वहां" => "wahan",
+        "यहाँ" | "यहां" => "yahan",
+        "कहाँ" | "कहां" => "kahan",
+        "हाँ" | "हां" => "haan",
+        "ठीक" => "theek",
+        "बहुत" => "bahut",
+        "एक" => "ek",
+        "और" => "aur",
+        "लेकिन" => "lekin",
+        "मतलब" => "matlab",
+        "ज़्यादा" | "ज्यादा" => "zyada",
+        "थोड़ा" => "thoda",
+        "पहले" => "pehle",
+        "कहना" => "kehna",
+        "रहना" => "rehna",
+        "चाहिए" => "chahiye",
+        "दिया" => "diya",
+        "लिया" => "liya",
+        "किया" => "kiya",
+        "गया" => "gaya",
+        "सब" => "sab",
+        _ => return None,
+    })
+}
+
 fn romanize_word(word: &str) -> String {
+    if let Some(w) = common(word) {
+        return w.to_string();
+    }
     let ls = letters(word);
     // Which letters end up with a vowel sound. Hindi drops the inherent "a" at the end of a
     // word ("kaam", not "kaama") and between a vowel and a consonant that has its own vowel
@@ -185,11 +232,12 @@ fn romanize_word(word: &str) -> String {
             Letter::Other(s) => out.push_str(s),
             Letter::C(c, Some(v)) => {
                 out.push_str(c);
-                // A long "aa" at the end of a word is written "a" ("mera", "kya").
-                out.push_str(if *v == "aa" && Some(i) == last {
-                    "a"
-                } else {
-                    v
+                // Long vowels at the end of a word are written short: "mera", "kya",
+                // "bhi", "nahi", "paani".
+                out.push_str(match *v {
+                    "aa" if Some(i) == last => "a",
+                    "ee" if Some(i) == last => "i",
+                    v => v,
                 });
             }
             Letter::C(c, None) => {
@@ -249,6 +297,11 @@ mod tests {
             ("घर", "ghar"),
             ("मेरा नाम राम है।", "mera naam raam hai."),
             ("कल 5 बजे meeting है", "kal 5 baje meeting hai"),
+            ("मैं भी नहीं जानता", "main bhi nahi jaanta"),
+            ("यह बहुत अच्छा है", "yeh bahut accha hai"),
+            ("पानी", "paani"),
+            ("क्यों नहीं", "kyun nahi"),
+            ("मुझे कुछ चाहिए", "mujhe kuch chahiye"),
         ] {
             assert_eq!(romanize(hi), en, "{hi}");
         }

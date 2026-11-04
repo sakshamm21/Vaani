@@ -26,6 +26,20 @@ use crate::preview::{self, Preview};
 const TAP: Duration = Duration::from_millis(300);
 /// Clips shorter than this are treated as accidental presses.
 const MIN_AUDIO_SAMPLES: usize = 16_000 * 3 / 10;
+/// Less speech than this is a tap of the hotkey or a click, not a word.
+const MIN_VOICED_MS: u32 = 120;
+/// Below this much speech, a lone "Yeah." or "You" is the model guessing at noise.
+const PHANTOM_VOICED_MS: u32 = 240;
+/// Added to the AI clean-up instructions for Hinglish.
+const HINGLISH_INSTRUCTION: &str = "the speaker mixes Hindi and English (Hinglish). Write Hindi \
+words in Latin letters the way people type them in chats (\"kya kar rahe ho\", \"theek hai\", \
+\"nahi\"), keep English words in English, never translate, and fix words the recognizer \
+misheard from context";
+
+/// The Hinglish language setting.
+fn is_hinglish(language: &str) -> bool {
+    language.eq_ignore_ascii_case(vaani_stt::HINGLISH)
+}
 /// Stop recording automatically after this long.
 /// Long dictations are transcribed in pieces while the speaker talks, cut at pauses, so the
 /// wait after the key is released stays short. A piece is at least this long.
@@ -383,9 +397,10 @@ impl Controller {
             0 => vaani_models::default_threads() as u32,
             n => n,
         };
+        let language = self.config.general.language.clone();
         self.set_engine(EngineStatus::Loading(model.name.clone()));
         let _ = thread::Builder::new().name("engine-load".into()).spawn(move || {
-            let mut engine = LocalEngine::new(model.clone(), threads);
+            let mut engine = LocalEngine::new(model.clone(), threads).with_language(&language);
             let status = match engine.warm_up() {
                 Ok(d) => {
                     tracing::info!(model = %model.id, ms = d.as_millis() as u64, "speech engine ready");
@@ -852,6 +867,23 @@ struct Job {
 }
 
 impl Job {
+    /// The Dictionary's words, as hints for engines that take them.
+    fn vocabulary(&self) -> Vec<String> {
+        let mut words: Vec<String> = Vec::new();
+        for r in &self.config.dictionary.replacements {
+            let w = r.to.trim();
+            // Short names and terms; whole sentences and addresses are not words to hear.
+            if !w.is_empty()
+                && w.split_whitespace().count() <= 3
+                && !w.contains('\n')
+                && !words.iter().any(|x| x == w)
+            {
+                words.push(w.to_string());
+            }
+        }
+        words
+    }
+
     /// Delete the last dictation with BackSpace, if it was inserted in the last 10 minutes.
     fn scratch_last(&self) {
         let last = self
@@ -975,6 +1007,13 @@ impl Job {
             .map(|r| r.to.clone())
             .collect();
         let trailing = text.len() - text.trim_end_matches(' ').len();
+        let mut extra = c.ai_instruction.trim().to_string();
+        if is_hinglish(&self.config.general.language) {
+            if !extra.is_empty() {
+                extra.push_str("; ");
+            }
+            extra.push_str(HINGLISH_INSTRUCTION);
+        }
         let req = vaani_llm::Request {
             provider,
             base_url: &c.ai_base_url,
@@ -982,7 +1021,7 @@ impl Job {
             api_key: &key,
             prompt: &c.ai_prompt,
             style: vaani_llm::Style::from_id(style),
-            extra: &c.ai_instruction,
+            extra: &extra,
             dictionary: &dictionary,
             timeout: Duration::from_millis(c.ai_timeout_ms.clamp(300, 10_000)),
         };
@@ -1031,7 +1070,8 @@ impl Job {
             vaani_models::find(&self.config.engine.local_model).filter(|m| m.is_installed())?;
         tracing::warn!(model = %model.id, "cloud transcription failed; using the local model");
         let threads = vaani_models::default_threads() as u32;
-        let mut engine = LocalEngine::new(model, threads);
+        let mut engine =
+            LocalEngine::new(model, threads).with_language(&self.config.general.language);
         match engine.transcribe(samples, &self.config.general.language) {
             Ok(t) => {
                 crate::notify::send(
@@ -1052,6 +1092,13 @@ impl Job {
         let audio_ms = (samples.len() as u64 * 1000 / 16_000) as i64;
         if samples.len() < MIN_AUDIO_SAMPLES {
             tracing::debug!(audio_ms, "too short; ignored");
+            return;
+        }
+        // A tap of the hotkey, or a pause without speaking: models invent words ("Yeah.")
+        // from the click and the hum, so nothing is sent to them.
+        let voiced = vaani_audio::voiced_ms(&samples);
+        if voiced < MIN_VOICED_MS {
+            tracing::debug!(audio_ms, voiced_ms = voiced, "no speech; ignored");
             return;
         }
         // A dictation made while the model is still loading waits for it instead of being
@@ -1097,7 +1144,7 @@ impl Job {
                 .ok()
                 .and_then(|s| s.as_ref().map(|e| e.name()))
                 .unwrap_or_default();
-            return self.finish(raw, name, audio_ms, released);
+            return self.finish(raw, name, audio_ms, voiced, released);
         }
         let result = {
             let Ok(mut slot) = self.engine.lock() else {
@@ -1114,6 +1161,7 @@ impl Job {
                 crate::notify::send("Vaani can't transcribe yet", &msg);
                 return;
             };
+            engine.set_vocabulary(&self.vocabulary());
             engine
                 .transcribe(rest, &self.config.general.language)
                 .map(|t| (t, engine.name()))
@@ -1134,11 +1182,23 @@ impl Job {
                 }
             },
         };
-        self.finish(raw, engine_name, audio_ms, released);
+        self.finish(raw, engine_name, audio_ms, voiced, released);
     }
 
     /// Everything after transcription: commands, clean-up, history and typing.
-    fn finish(&self, raw: String, engine_name: String, audio_ms: i64, released: Instant) {
+    fn finish(
+        &self,
+        raw: String,
+        engine_name: String,
+        audio_ms: i64,
+        voiced_ms: u32,
+        released: Instant,
+    ) {
+        // "Yeah." or "You" from a breath or a short noise, not from someone speaking.
+        if voiced_ms < PHANTOM_VOICED_MS && vaani_text::is_phantom(&raw) {
+            tracing::debug!(voiced_ms, "short noise read as a word; ignored");
+            return;
+        }
         // "Scratch that": remove the previous dictation instead of typing anything.
         if self.config.dictionary.spoken_commands && vaani_text::is_scratch(&raw) {
             self.scratch_last();
@@ -1156,6 +1216,11 @@ impl Job {
                 .and_then(|r| r.trailing_space)
                 .unwrap_or(self.config.insert.trailing_space),
             spoken_commands: self.config.dictionary.spoken_commands,
+            full_stop: match self.config.insert.full_stop {
+                vaani_core::config::FullStop::Smart => vaani_text::FullStop::Smart,
+                vaani_core::config::FullStop::Always => vaani_text::FullStop::Keep,
+                vaani_core::config::FullStop::Never => vaani_text::FullStop::Never,
+            },
             replacements: self
                 .config
                 .dictionary
@@ -1188,8 +1253,17 @@ impl Job {
                 text = polished;
             }
         }
-        if self.config.general.hindi_script == "latin" {
+        if self.config.general.hindi_script == "latin" || is_hinglish(&self.config.general.language)
+        {
             text = vaani_text::hindi::romanize(&text);
+        }
+        // The AI pass and the Latin spelling can bring a full stop back.
+        if !snippet {
+            text = vaani_text::apply_full_stop(
+                &text,
+                rules.full_stop,
+                rules.spoken_commands && vaani_text::ends_with_spoken_stop(&raw),
+            );
         }
         if text.contains('{') {
             text = self.fill_variables(&text);
