@@ -24,6 +24,8 @@ mod native_x11;
 mod notify;
 mod overlay;
 #[cfg(windows)]
+mod packaged;
+#[cfg(windows)]
 mod pipe;
 mod preview;
 mod settings;
@@ -55,6 +57,15 @@ fn main() -> ExitCode {
     attach_console();
     lighter_rendering();
     let cli = Cli::parse();
+    // The Store package's Start menu entry starts vaani.exe with no arguments: open Settings.
+    #[cfg(windows)]
+    let cli = if cli.command.is_none() && packaged::launched_from_start_menu() {
+        Cli {
+            command: Some(Cmd::Settings),
+        }
+    } else {
+        cli
+    };
     let result = match cli.command.unwrap_or(Cmd::Run) {
         Cmd::Run => daemon::run(false),
         Cmd::Toggle => ipc::client_call(Call::Toggle),

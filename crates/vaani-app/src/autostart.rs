@@ -7,6 +7,10 @@ const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 /// Create or remove the Run entry to match `enabled`.
 #[cfg(windows)]
 pub fn sync(enabled: bool) {
+    if crate::packaged::app_id().is_some() {
+        crate::packaged::sync_startup(enabled);
+        return;
+    }
     let Ok(key) = windows_registry::CURRENT_USER.create(RUN) else {
         return;
     };
