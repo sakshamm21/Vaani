@@ -104,6 +104,16 @@ pub const KEYS: &[(&str, u32)] = &[
     ("F12", 0xffc9),
 ];
 
+/// Whether `name` is a shortcut this platform can listen for: one of [`KEYS`], or on
+/// Windows also a chord of modifiers such as "Ctrl+Super" (Ctrl + Win), "Ctrl+Alt" or
+/// "Alt+F9".
+pub fn is_valid(name: &str) -> bool {
+    #[cfg(windows)]
+    return windows::parse(name).is_some();
+    #[cfg(not(windows))]
+    keysym_for(name).is_some()
+}
+
 pub fn keysym_for(name: &str) -> Option<u32> {
     KEYS.iter()
         .find(|(n, _)| n.eq_ignore_ascii_case(name))
@@ -192,8 +202,8 @@ pub fn listen(
     backend: Option<Backend>,
     tx: Sender<HotkeyEvent>,
 ) -> Result<(Listener, Backend), HotkeyError> {
-    if !command_key.is_empty() {
-        keysym_for(command_key).ok_or_else(|| HotkeyError::UnknownKey(command_key.into()))?;
+    if !command_key.is_empty() && !is_valid(command_key) {
+        return Err(HotkeyError::UnknownKey(command_key.into()));
     }
     let watch = Watch {
         key: key.to_string(),
@@ -220,13 +230,14 @@ pub fn listen(
 }
 
 /// Wait for the next key press from a pickable key and return its name (for the settings
-/// "press a key" button). Returns None after `timeout`.
-pub fn capture_next_key(timeout: Duration) -> Result<Option<&'static str>, HotkeyError> {
+/// "press a key" button). On Windows keys pressed together give a chord ("Ctrl+Super").
+/// Returns None after `timeout`.
+pub fn capture_next_key(timeout: Duration) -> Result<Option<String>, HotkeyError> {
     match backend() {
         #[cfg(target_os = "linux")]
-        Backend::X11 => x11::capture_next_key(timeout),
+        Backend::X11 => Ok(x11::capture_next_key(timeout)?.map(str::to_string)),
         #[cfg(target_os = "linux")]
-        Backend::Evdev => evdev::capture_next_key(timeout),
+        Backend::Evdev => Ok(evdev::capture_next_key(timeout)?.map(str::to_string)),
         Backend::Portal => Err(HotkeyError::Portal(
             "change the shortcut in your desktop's keyboard settings".into(),
         )),
@@ -245,7 +256,9 @@ impl Drop for Listener {
 
 impl Listener {
     pub fn set_key(&self, name: &str) -> Result<(), HotkeyError> {
-        keysym_for(name).ok_or_else(|| HotkeyError::UnknownKey(name.into()))?;
+        if !is_valid(name) {
+            return Err(HotkeyError::UnknownKey(name.into()));
+        }
         if let Ok(mut k) = self.key.lock() {
             k.key = name.to_string();
         }
@@ -254,8 +267,8 @@ impl Listener {
 
     /// Set the command-mode key; empty turns it off.
     pub fn set_command_key(&self, name: &str) -> Result<(), HotkeyError> {
-        if !name.is_empty() {
-            keysym_for(name).ok_or_else(|| HotkeyError::UnknownKey(name.into()))?;
+        if !name.is_empty() && !is_valid(name) {
+            return Err(HotkeyError::UnknownKey(name.into()));
         }
         if let Ok(mut k) = self.key.lock() {
             k.command = name.to_string();

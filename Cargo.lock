@@ -4408,7 +4408,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-app"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4448,7 +4448,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-audio"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cpal",
  "hound",
@@ -4459,7 +4459,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "directories",
  "notify",
@@ -4472,7 +4472,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-hotkey"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "ashpd",
  "crossbeam-channel",
@@ -4488,7 +4488,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-inject"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "crossbeam-channel",
  "evdev",
@@ -4506,7 +4506,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-llm"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "reqwest",
  "serde_json",
@@ -4516,7 +4516,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-models"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bzip2 0.5.2",
  "reqwest",
@@ -4531,14 +4531,14 @@ dependencies = [
 
 [[package]]
 name = "vaani-platform"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "vaani-store"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "keyring",
  "oo7",
@@ -4551,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "vaani-stt"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "postcard",
  "reqwest",
@@ -4564,11 +4564,11 @@ dependencies = [
 
 [[package]]
 name = "vaani-text"
-version = "0.5.2"
+version = "0.5.3"
 
 [[package]]
 name = "vaani-worker"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "sherpa-onnx",
  "vaani-models",

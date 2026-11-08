@@ -180,6 +180,24 @@ impl SttEngine for LocalEngine {
         format!("{} (local)", self.model.name)
     }
 
+    /// Recording started: if the model was freed while idle, load it again now, so it is
+    /// ready (Parakeet takes about 2 s) by the time the key is let go.
+    fn warm(&mut self) {
+        if self.worker.is_none() {
+            if let Err(e) = self.warm_up() {
+                tracing::warn!("speech model failed to load: {e}");
+            }
+        }
+    }
+
+    fn unload(&mut self) -> bool {
+        let freed = self.worker.take().is_some();
+        if freed {
+            tracing::info!(model = %self.model.id, "speech model unloaded while idle");
+        }
+        freed
+    }
+
     fn transcribe(&mut self, samples: &[f32], language: &str) -> Result<Transcript, SttError> {
         match self.try_transcribe(samples, language) {
             Err(e @ (SttError::Io(_) | SttError::Protocol(_))) => {

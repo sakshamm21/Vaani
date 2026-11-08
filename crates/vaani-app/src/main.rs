@@ -118,12 +118,29 @@ fn lighter_rendering() {}
 /// Vaani's UI is a few flat widgets, so GTK's software cairo renderer is plenty and skips a
 /// GL context: about 90 MB less memory while the settings window is open. Users can still
 /// pick a renderer with GSK_RENDERER.
+///
+/// GTK still opens EGL at start-up to see what GL it could use, even with the cairo
+/// renderer, which maps Mesa and LLVM into the process: idle, Vaani measured 145 MB resident
+/// with it and 68 MB without (Ubuntu 24.04, GTK 4.14). So GL is switched off too, unless the
+/// user picked a renderer. GDK_DEBUG=gl-disable is the GTK 4.14 spelling, GDK_DISABLE=gl the
+/// one from 4.16 on.
 #[cfg(not(windows))]
 #[allow(unsafe_code)]
 fn lighter_rendering() {
     if std::env::var_os("GSK_RENDERER").is_none() {
         // SAFETY: called first thing in main, before any other thread exists.
         unsafe { std::env::set_var("GSK_RENDERER", "cairo") };
+        for (var, value) in [("GDK_DEBUG", "gl-disable"), ("GDK_DISABLE", "gl")] {
+            match std::env::var(var) {
+                // SAFETY: as above.
+                Err(_) => unsafe { std::env::set_var(var, value) },
+                Ok(v) if !v.split([',', ':']).any(|x| x == value) => {
+                    // SAFETY: as above.
+                    unsafe { std::env::set_var(var, format!("{v},{value}")) }
+                }
+                Ok(_) => {}
+            }
+        }
     }
     // On Wayland the pill must sit above other windows without taking focus, which plain
     // Wayland windows can't do on every desktop. Through XWayland it is an override-redirect

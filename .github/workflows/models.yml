@@ -1,0 +1,22 @@
+name: Model archives
+
+# The speech models are downloaded from the sherpa-onnx releases, whose files are sometimes
+# replaced. Vaani rejects an archive whose SHA-256 differs from models/registry.toml, so a
+# replaced file breaks that model's download for everyone. This checks every archive weekly.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checksums:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check every model archive against the registry
+        run: cargo test -p vaani-models --release -- --ignored upstream --nocapture

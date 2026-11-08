@@ -42,6 +42,11 @@ pub trait SttEngine: Send {
     /// Called when a recording starts, so the engine can get ready while the user speaks
     /// (a cloud engine opens its connection then, instead of after the key is released).
     fn warm(&mut self) {}
+    /// Give back the memory a local model holds; the next [`SttEngine::warm`] or
+    /// transcription loads it again. Returns whether anything was freed.
+    fn unload(&mut self) -> bool {
+        false
+    }
 }
 
 /// The language setting for Hindi mixed with English, written in Latin letters.

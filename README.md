@@ -52,8 +52,9 @@
   AI clean-up, command mode for rewriting a selection, and per-app rules.
 - **Linux and Windows.** X11 and Wayland (GNOME, KDE Plasma, Hyprland, sway, Cinnamon and
   others), and Windows 10 and 11.
-- **Native and light.** Rust and GTK 4. About 115 MB of memory and no CPU when idle; the
-  default model adds about 850 MB.
+- **Native and light.** Rust and GTK 4. About 45 MB of memory and no CPU when idle on Linux;
+  the default model adds about 800 MB while loaded, and is freed after 15 minutes without
+  dictating (it loads again in about 2 s, while you speak).
 
 <p align="center">
   <img src="assets/readme/pill.png" alt="The recording indicator while listening and while transcribing, in light and dark" width="560">
@@ -85,24 +86,26 @@
 | --- | --- |
 | System | Linux on x86-64 with X11 or Wayland, or Windows 10 (1809 or later) or 11 on x64 |
 | Linux packages for | Debian 12, Ubuntu 22.04+, Linux Mint 21+, Pop!_OS, Fedora, openSUSE Tumbleweed and Leap 15.6, Arch |
-| Memory | About 1 GB free with the default model; 115 MB with a cloud engine |
+| Memory | About 900 MB free with the default model loaded; 45 MB with a cloud engine or while the model is freed |
 | Disk | 46 MB for the app on Linux, about 150 MB on Windows, plus 100 MB to 1.9 GB per model |
 | Other | A microphone; internet for the first model download |
 
 ### Windows
 
-Download `vaani-0.5.2-windows-x64-setup.exe` from the
+Download `vaani-0.5.3-windows-x64-setup.exe` from the
 [latest release](https://github.com/sakshamm21/Vaani/releases/latest) and run it. It installs
 for your user only, so it needs no administrator rights, and adds Vaani to the Start menu.
 
 The installer is not code-signed yet, so Windows SmartScreen may say it "protected your PC".
 Click **More info**, then **Run anyway**. `SHA256SUMS-windows` lists the checksum of each file.
 
-Then start **Vaani** from the Start menu and hold **Right Ctrl**. To uninstall, use
+Then start **Vaani** from the Start menu and hold **Ctrl + Win**. Windows uses Ctrl + Win
+because many laptops have no Right Ctrl; **General → Dictation key → Change…** takes any
+single key or keys pressed together. To uninstall, use
 **Settings → Apps → Installed apps → Vaani**; it asks whether to keep your settings, history
 and models.
 
-For a portable copy, unpack `vaani-0.5.2-windows-x64-portable.zip` anywhere and run
+For a portable copy, unpack `vaani-0.5.3-windows-x64-portable.zip` anywhere and run
 `bin\vaani.exe`.
 
 ### Linux packages
@@ -111,9 +114,9 @@ Download the package for your distribution from the
 [latest release](https://github.com/sakshamm21/Vaani/releases/latest) and install it:
 
 ```sh
-sudo apt install ./vaani_0.5.2_amd64.deb                                 # Debian, Ubuntu, Mint, Pop!_OS
-sudo dnf install ./vaani-0.5.2-1.x86_64.rpm                              # Fedora
-sudo zypper install --allow-unsigned-rpm ./vaani-0.5.2-1.x86_64.rpm      # openSUSE
+sudo apt install ./vaani_0.5.3_amd64.deb                                 # Debian, Ubuntu, Mint, Pop!_OS
+sudo dnf install ./vaani-0.5.3-1.x86_64.rpm                              # Fedora
+sudo zypper install --allow-unsigned-rpm ./vaani-0.5.3-1.x86_64.rpm      # openSUSE
 ```
 
 On Arch, build the `vaani-bin` package from the release's `PKGBUILD`:
@@ -131,7 +134,7 @@ The packages set everything up, Wayland included: nothing to add to a group, no 
 setting to change, no need to log out or restart. On GNOME and KDE Plasma the desktop asks
 once to confirm Vaani's shortcut.
 
-Other distributions can use `vaani-0.5.2-x86_64-linux.tar.gz`: unpack it and run
+Other distributions can use `vaani-0.5.3-x86_64-linux.tar.gz`: unpack it and run
 `./install.sh` to install under `~/.local` (it needs GTK 4 and ALSA). `SHA256SUMS` lists the
 checksum of every file.
 
@@ -162,6 +165,8 @@ the background with a tray icon and starts at login (**General → Start Vaani w
 | Tray → **Paste last** | Inserts the most recent dictation again |
 | Tray → **Speech engine** | Switches between downloaded models and the cloud engine |
 | Tray → **Settings** | Opens the settings window |
+
+On Windows the default key is **Ctrl + Win** (held together) instead of Right Ctrl.
 
 Recordings are limited to five minutes. Every dictation is saved to History before it is
 inserted, so nothing is lost if an app refuses the text.
@@ -498,7 +503,7 @@ GTK 4 bundle: unpack it, put its `bin` on `PATH`, point `PKG_CONFIG_PATH` at its
 GTK DLLs, icons and pixbuf loaders, then builds the portable zip and the Inno Setup installer
 (`packaging/windows/vaani.iss`). CI does this on `windows-latest` and runs
 `scripts/windows-smoke-test.ps1`: a silent install, a dictation of a recorded sentence into
-Notepad with Right Ctrl, the command line, and a silent uninstall.
+Notepad with Ctrl + Win and again after switching to Right Ctrl, the command line, and a silent uninstall.
 
 Pushing a `v*` tag builds every package and creates one draft release with the Linux and
 Windows files.
