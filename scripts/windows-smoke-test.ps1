@@ -120,36 +120,69 @@ Start-Sleep 4
 Shot "2-settings"
 if (@(AppProcs).Count -ne 1) { Fail "a second Vaani kept running" }
 
-Step "Dictate into Notepad with the hotkey (Right Ctrl)"
+# Select all in Notepad and copy it, to read what was typed.
+function NotepadText {
+  [Keys]::Down(0x11, 0, $false); [Keys]::Down(0x41, 0, $false); [Keys]::Up(0x41, 0, $false); [Keys]::Up(0x11, 0, $false)
+  Start-Sleep -Milliseconds 300
+  Set-Clipboard -Value "(Notepad was empty)"
+  [Keys]::Down(0x11, 0, $false); [Keys]::Down(0x43, 0, $false); [Keys]::Up(0x43, 0, $false); [Keys]::Up(0x11, 0, $false)
+  Start-Sleep -Milliseconds 500
+  return Get-Clipboard -Raw
+}
+function WaitIdle {
+  for ($i = 0; $i -lt 30; $i++) {
+    Start-Sleep 1
+    if ((& $Exe status 2>&1 | Out-String) -match "^idle") { break }
+  }
+}
+
+Step "Dictate into Notepad with the default hotkey (Ctrl + Win)"
 $np = Start-Process notepad -PassThru
 Start-Sleep 2
 Focus $np
 Set-Clipboard -Value "the user's clipboard"
-[Keys]::Down(0xA3, 0x1D, $true)
+[Keys]::Down(0xA2, 0x1D, $false)
+[Keys]::Down(0x5B, 0x5B, $true)
 Start-Sleep -Milliseconds 1500
 Shot "3-pill-recording"
-[Keys]::Up(0xA3, 0x1D, $true)
+[Keys]::Up(0x5B, 0x5B, $true)
+[Keys]::Up(0xA2, 0x1D, $false)
 Start-Sleep -Milliseconds 300
 Shot "4-pill-transcribing"
-$typed = ""
-for ($i = 0; $i -lt 30; $i++) {
-  Start-Sleep 1
-  if ((& $Exe status 2>&1 | Out-String) -match "^idle") { break }
-}
+# Letting go of Win must not open the Start menu over Notepad.
+if ([Keys]::GetForegroundWindow() -ne $np.MainWindowHandle) { Fail "something took the focus from Notepad after Ctrl + Win (the Start menu?)" }
+WaitIdle
 Start-Sleep 2
 Shot "5-notepad"
 $restored = Get-Clipboard -Raw
-[Keys]::Down(0x11, 0, $false); [Keys]::Down(0x41, 0, $false); [Keys]::Up(0x41, 0, $false); [Keys]::Up(0x11, 0, $false)
-Start-Sleep -Milliseconds 300
-Set-Clipboard -Value "(Notepad was empty)"
-[Keys]::Down(0x11, 0, $false); [Keys]::Down(0x43, 0, $false); [Keys]::Up(0x43, 0, $false); [Keys]::Up(0x11, 0, $false)
-Start-Sleep -Milliseconds 500
-$typed = Get-Clipboard -Raw
+$typed = NotepadText
 Write-Host "Notepad has: '$typed'"
 Write-Host "Clipboard after dictation: '$restored'"
 Vaani history 3 | Out-Null
 if ($typed -notmatch "(?i)hello.*windows") { Fail "dictated text did not reach Notepad: '$typed'" }
 if ($restored -ne "the user's clipboard") { Fail "clipboard was not restored: '$restored'" }
+Stop-Process $np -Force
+
+Step "Change the hotkey to Right Ctrl, then dictate with it"
+# The same as picking it in Settings: the app sees the config file change and switches keys.
+$cfg = "$env:APPDATA\sakshamm21\vaani\config\config.toml"
+$t = if (Test-Path $cfg) { [IO.File]::ReadAllText($cfg) } else { "" }
+if ($t -notmatch '(?m)^version\s*=') { $t = "version = 3`n" + $t }
+if ($t -match '(?m)^\[hotkey\]') { $t = $t -replace '(?m)^key = ".*"', 'key = "RightCtrl"' } else { $t += "`n[hotkey]`nkey = `"RightCtrl`"`n" }
+New-Item -ItemType Directory -Force (Split-Path $cfg) | Out-Null
+[IO.File]::WriteAllText($cfg, $t)
+Start-Sleep 3
+$np = Start-Process notepad -PassThru
+Start-Sleep 2
+Focus $np
+[Keys]::Down(0xA3, 0x1D, $true)
+Start-Sleep -Milliseconds 1500
+[Keys]::Up(0xA3, 0x1D, $true)
+WaitIdle
+Start-Sleep 2
+$typed = NotepadText
+Write-Host "Notepad has: '$typed'"
+if ($typed -notmatch "(?i)hello.*windows") { Fail "dictation with the changed hotkey did not reach Notepad: '$typed'" }
 Stop-Process $np -Force
 
 Step "CLI toggle into Notepad"

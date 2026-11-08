@@ -81,7 +81,7 @@ struct Inner {
     // General
     key_label: gtk4::Label,
     home_key: gtk4::Label,
-    capturing: RefCell<Option<std::sync::mpsc::Receiver<Option<&'static str>>>>,
+    capturing: RefCell<Option<std::sync::mpsc::Receiver<Option<String>>>>,
     capture_button: gtk4::Button,
     theme_drop: gtk4::DropDown,
     theme_btn: gtk4::Button,
@@ -476,7 +476,20 @@ impl Settings {
                         }
                     }
                     Err(e) if e == "download cancelled" => {}
-                    Err(e) => crate::notify::send("Model download failed", &e),
+                    Err(e) => {
+                        let kept = vaani_models::find(&id)
+                            .map(|m| vaani_models::partial_bytes(&m))
+                            .unwrap_or(0);
+                        let body = if kept > 0 {
+                            format!(
+                                "{e}. The {:.0} MB already downloaded are kept: press Resume to continue.",
+                                kept as f64 / 1e6
+                            )
+                        } else {
+                            e
+                        };
+                        crate::notify::send("Model download failed", &body);
+                    }
                 }
             }
             self.refresh_home();
@@ -509,9 +522,8 @@ impl Settings {
             EngineStatus::Ready(name) => (format!("{name} is ready."), None),
             EngineStatus::Loading(name) => (format!("Loading {name}…"), None),
             EngineStatus::Missing(what) if cfg.engine.kind == EngineKind::Local => {
-                let size = vaani_models::find(&cfg.engine.local_model)
-                    .map(|m| m.download_mb)
-                    .unwrap_or(0);
+                let model = vaani_models::find(&cfg.engine.local_model);
+                let size = model.as_ref().map(|m| m.download_mb).unwrap_or(0);
                 if downloading {
                     (
                         format!("Downloading {what}. You can run the checks below meanwhile."),
@@ -522,7 +534,7 @@ impl Settings {
                         format!(
                             "{what} runs on this computer, so your voice never leaves it. One-time {size} MB download."
                         ),
-                        Some(format!("Download ({size} MB)")),
+                        model.as_ref().map(download_label),
                     )
                 }
             }
@@ -634,7 +646,13 @@ impl Settings {
                 i.hero_badge.set_text("setup");
                 i.hero_badge.add_css_class("accent");
                 if !downloading {
-                    i.hero_action.set_label(&format!("Download {what}"));
+                    let resume = vaani_models::find(&cfg.engine.local_model)
+                        .is_some_and(|m| vaani_models::partial_bytes(&m) > 0);
+                    i.hero_action.set_label(&if resume {
+                        format!("Resume {what} download")
+                    } else {
+                        format!("Download {what}")
+                    });
                     i.hero_action.set_visible(true);
                 }
             }
@@ -744,7 +762,7 @@ impl Settings {
                 right.append(&rm);
             }
         } else {
-            let dl_btn = gtk4::Button::with_label(&format!("Download ({} MB)", m.download_mb));
+            let dl_btn = gtk4::Button::with_label(&download_label(m));
             let model = m.clone();
             let weak = Rc::downgrade(&self.inner);
             dl_btn.connect_clicked(move |_| {
@@ -969,6 +987,16 @@ fn mic_dropdown(shared: &Arc<Shared>, cfg: &Config) -> gtk4::DropDown {
         });
     }
     mic
+}
+
+/// "Download (465 MB)", or "Resume (120 of 465 MB)" when an earlier try stopped part way.
+fn download_label(m: &ModelInfo) -> String {
+    let have = vaani_models::partial_bytes(m);
+    if have > 0 {
+        format!("Resume ({:.0} of {} MB)", have as f64 / 1e6, m.download_mb)
+    } else {
+        format!("Download ({} MB)", m.download_mb)
+    }
 }
 
 fn open_history() -> Option<vaani_store::History> {
@@ -1291,12 +1319,16 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         let weak = Rc::downgrade(inner);
         inner.capture_button.connect_clicked(move |b| {
             let Some(inner) = weak.upgrade() else { return };
-            b.set_label("Press a key…");
+            b.set_label(if cfg!(windows) {
+                "Press the keys…"
+            } else {
+                "Press a key…"
+            });
             b.set_sensitive(false);
             let (tx, rx) = std::sync::mpsc::channel();
             *inner.capturing.borrow_mut() = Some(rx);
             std::thread::spawn(move || {
-                let r = vaani_hotkey::capture_next_key(Duration::from_secs(6))
+                let r = vaani_hotkey::capture_next_key(Duration::from_secs(10))
                     .ok()
                     .flatten();
                 let _ = tx.send(r);
@@ -1373,7 +1405,11 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
     content.append(&card(&[
         row(
             "Dictation key",
-            "Right Ctrl, Right Alt, a function key or similar. Esc always cancels.",
+            if cfg!(windows) {
+                "Ctrl + Win by default. Click Change, then press one key (Right Ctrl, F9) or keys together (Ctrl + Alt). Esc always cancels."
+            } else {
+                "Right Ctrl, Right Alt, a function key or similar. Esc always cancels."
+            },
             &keybox,
         ),
         row("How the key works", "", &modes),
@@ -1647,8 +1683,34 @@ fn build_speech(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.general.hindi_script = v.to_string());
         });
     }
+    const FREE_AFTER: &[(u32, &str)] = &[
+        (0, "Never"),
+        (5, "After 5 min"),
+        (15, "After 15 min"),
+        (60, "After 1 hour"),
+    ];
+    let free_names: Vec<&str> = FREE_AFTER.iter().map(|(_, n)| *n).collect();
+    let free = gtk4::DropDown::from_strings(&free_names);
+    free.set_selected(
+        FREE_AFTER
+            .iter()
+            .position(|(m, _)| *m == cfg.general.free_model_after_mins)
+            .unwrap_or(0) as u32,
+    );
+    {
+        let shared = shared.clone();
+        free.connect_selected_notify(move |d| {
+            let mins = FREE_AFTER.get(d.selected() as usize).map_or(0, |(m, _)| *m);
+            update_config(&shared, |c| c.general.free_model_after_mins = mins);
+        });
+    }
     content.append(&card(&[
         row("Where speech is turned into text", "", &radios),
+        row(
+            "Free memory when idle",
+            "Unload the local model when you haven't dictated for a while. It loads again as soon as you press the key, while you speak.",
+            &free,
+        ),
         row(
             "Keep everything on this computer",
             "Never send audio to a cloud service, even by mistake.",
@@ -2464,9 +2526,12 @@ fn build_about(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             if let Some(p) = &path {
                 let _ = std::fs::create_dir_all(p);
                 let uri = gtk4::gio::File::for_path(p).uri();
-                // Don't pass on the XWayland backend Vaani may run its own UI with.
+                // Don't pass on the XWayland backend and the software rendering Vaani may run
+                // its own UI with.
                 let ctx = gtk4::gio::AppLaunchContext::new();
-                ctx.unsetenv("GDK_BACKEND");
+                for var in ["GDK_BACKEND", "GSK_RENDERER", "GDK_DEBUG", "GDK_DISABLE"] {
+                    ctx.unsetenv(var);
+                }
                 let _ = gtk4::gio::AppInfo::launch_default_for_uri(&uri, Some(&ctx));
             }
         }

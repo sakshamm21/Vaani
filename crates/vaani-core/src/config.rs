@@ -15,7 +15,7 @@ use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
 /// Bump this when a change to the schema needs a migration, and add a step to [`migrate`].
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -96,6 +96,10 @@ pub struct General {
     pub theme: Theme,
     /// The first-run setup page has been completed or skipped.
     pub onboarded: bool,
+    /// Stop the local speech model after this many minutes without dictating, giving its
+    /// memory (about 800 MB for Parakeet) back to the system. It loads again when the key is
+    /// pressed, while you speak. 0 keeps it loaded.
+    pub free_model_after_mins: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -119,6 +123,7 @@ impl Default for General {
             live_preview: true,
             theme: Theme::System,
             onboarded: false,
+            free_model_after_mins: 15,
         }
     }
 }
@@ -156,11 +161,19 @@ pub struct Hotkey {
     pub backend: HotkeyBackend,
 }
 
+/// The dictation key out of the box. Linux: Right Ctrl. Windows: Ctrl + Win held together,
+/// because many Windows laptops have no Right Ctrl (newer ones put a Copilot key there).
+pub const DEFAULT_KEY: &str = if cfg!(windows) {
+    "Ctrl+Super"
+} else {
+    "RightCtrl"
+};
+
 impl Default for Hotkey {
     fn default() -> Self {
         Self {
             mode: HotkeyMode::PushToTalk,
-            key: "RightCtrl".into(),
+            key: DEFAULT_KEY.into(),
             command_key: String::new(),
             backend: HotkeyBackend::Auto,
         }
@@ -581,6 +594,16 @@ fn migrate(table: &mut toml::Table, path: &Path) -> Result<bool, ConfigError> {
                 }
             }
         }
+        if version == 2 && cfg!(windows) {
+            // Windows moved from Right Ctrl to Ctrl + Win. Settings could only store a key the
+            // person pressed, and Right Ctrl is what most laptops lack, so a Right Ctrl here
+            // is almost always the old default.
+            if let Some(toml::Value::Table(h)) = table.get_mut("hotkey") {
+                if h.get("key").and_then(toml::Value::as_str) == Some("RightCtrl") {
+                    h.insert("key".into(), toml::Value::String(DEFAULT_KEY.into()));
+                }
+            }
+        }
         version += 1;
     }
     if version != found {
@@ -677,7 +700,15 @@ mod tests {
     fn partial_file_fills_in_defaults() {
         let (c, _) = Config::from_toml("version = 1\n[hotkey]\nmode = \"toggle\"\n", p()).unwrap();
         assert_eq!(c.hotkey.mode, HotkeyMode::Toggle);
-        assert_eq!(c.hotkey.key, "RightCtrl");
+        assert_eq!(c.hotkey.key, DEFAULT_KEY);
+        assert_eq!(
+            DEFAULT_KEY,
+            if cfg!(windows) {
+                "Ctrl+Super"
+            } else {
+                "RightCtrl"
+            }
+        );
         assert_eq!(c.engine, Engine::default());
     }
 
@@ -776,7 +807,7 @@ mod tests {
         let c = Config::load(&path).unwrap();
         assert!(c.general.autostart);
         let on_disk = fs::read_to_string(&path).unwrap();
-        assert!(on_disk.contains("version = 2"));
+        assert!(on_disk.contains("version = 3"));
     }
 
     #[test]
@@ -787,6 +818,25 @@ mod tests {
         assert_eq!(c.cleanup.ai_timeout_ms, 2500);
         let (c, _) = Config::from_toml("version = 1\n[cleanup]\nai_timeout_ms = 900\n", p).unwrap();
         assert_eq!(c.cleanup.ai_timeout_ms, 900);
+    }
+
+    #[test]
+    fn windows_moves_off_right_ctrl_and_linux_keeps_it() {
+        let p = Path::new("config.toml");
+        let (c, _) = Config::from_toml("version = 2\n[hotkey]\nkey = \"RightCtrl\"\n", p).unwrap();
+        assert_eq!(
+            c.hotkey.key,
+            if cfg!(windows) {
+                "Ctrl+Super"
+            } else {
+                "RightCtrl"
+            }
+        );
+        // A key the person picked stays, and so does Right Ctrl picked after the change.
+        let (c, _) = Config::from_toml("version = 2\n[hotkey]\nkey = \"F9\"\n", p).unwrap();
+        assert_eq!(c.hotkey.key, "F9");
+        let (c, _) = Config::from_toml("version = 3\n[hotkey]\nkey = \"RightCtrl\"\n", p).unwrap();
+        assert_eq!(c.hotkey.key, "RightCtrl");
     }
 
     #[test]

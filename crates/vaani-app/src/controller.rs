@@ -449,6 +449,7 @@ impl Controller {
     }
 
     fn on_tick(&mut self) {
+        self.free_idle_model();
         self.check_silence();
         self.transcribe_early();
         self.update_preview();
@@ -463,7 +464,8 @@ impl Controller {
         }
     }
 
-    /// Let a cloud engine open its connection while the user speaks.
+    /// Let a cloud engine open its connection while the user speaks, and load a local model
+    /// that was freed while idle.
     fn warm_engine(&self) {
         if !matches!(self.shared.engine(), EngineStatus::Ready(_)) {
             return;
@@ -472,7 +474,7 @@ impl Controller {
         let _ = thread::Builder::new().name("warm".into()).spawn(move || {
             // try_lock: never hold up a transcription that is already running.
             if let Ok(mut slot) = engine.try_lock() {
-                if let Some(e) = slot.as_mut().filter(|e| e.is_cloud()) {
+                if let Some(e) = slot.as_mut() {
                     e.warm();
                 }
             }
@@ -556,6 +558,24 @@ impl Controller {
                         });
                 }
                 Some(slot)
+            }
+        }
+    }
+
+    /// Stop the local model's worker after a while without dictating (General setting).
+    fn free_idle_model(&mut self) {
+        let mins = self.config.general.free_model_after_mins;
+        if mins == 0
+            || self.recording.is_some()
+            || self.machine.state() != State::Idle
+            || self.last_dictation.elapsed() < Duration::from_secs(u64::from(mins) * 60)
+        {
+            return;
+        }
+        // try_lock: a transcription or a load in progress means it is in use.
+        if let Ok(mut slot) = self.engine.try_lock() {
+            if let Some(e) = slot.as_mut() {
+                e.unload();
             }
         }
     }
