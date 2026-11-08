@@ -111,6 +111,17 @@ if (-not (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 # The speech worker is vaani.exe started in worker mode: no second program to allow.
 if (Test-Path "$App\bin\vaani-worker.exe") { Fail "a separate vaani-worker.exe was installed" }
 if (@(AppProcs).Count -ne 1 -or @(WorkerProcs).Count -ne 1) { Fail "expected one app and one worker process" }
+# Memory as Task Manager shows it (private working set), for the record.
+function Memory($label) {
+  foreach ($p in VaaniProcs) {
+    $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+    if ($proc) {
+      $role = if ($p.CommandLine -match "--speech-worker") { "worker" } else { "app" }
+      "{0}: {1} private {2:N0} MB, working set {3:N0} MB" -f $label, $role, ($proc.PrivateMemorySize64 / 1MB), ($proc.WorkingSet64 / 1MB) | Write-Host
+    }
+  }
+}
+Memory "idle"
 Start-Sleep 2
 Shot "1-running"
 
@@ -154,6 +165,7 @@ if ([Keys]::GetForegroundWindow() -ne $np.MainWindowHandle) { Fail "something to
 WaitIdle
 Start-Sleep 2
 Shot "5-notepad"
+Memory "after a dictation"
 $restored = Get-Clipboard -Raw
 $typed = NotepadText
 Write-Host "Notepad has: '$typed'"
@@ -211,6 +223,30 @@ Step "Quit"
 Vaani quit | Out-Null
 Start-Sleep 3
 if (Get-Process vaani -ErrorAction SilentlyContinue) { Fail "Vaani still running after quit" }
+
+# Not a check: how much less memory GTK's software renderer would use, and how the pill
+# looks with it (screenshot 6). Uses the Right Ctrl key set above.
+Step "Experiment: software renderer"
+$env:GSK_RENDERER = "cairo"
+Start-Process $Exe -ArgumentList "run"
+for ($i = 0; $i -lt 90; $i++) {
+  Start-Sleep 1
+  if ((& $Exe status 2>&1 | Out-String) -match "ready") { break }
+}
+Start-Sleep 5
+Memory "idle, cairo"
+$np = Start-Process notepad -PassThru
+Start-Sleep 2
+Focus $np
+[Keys]::Down(0xA3, 0x1D, $true)
+Start-Sleep -Milliseconds 1500
+Shot "6-pill-recording-cairo"
+[Keys]::Up(0xA3, 0x1D, $true)
+WaitIdle
+Stop-Process $np -Force
+Vaani quit | Out-Null
+Start-Sleep 3
+Remove-Item Env:GSK_RENDERER
 
 Step "Logs"
 Get-ChildItem "$env:LOCALAPPDATA\sakshamm21\vaani\data\logs" -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Tail 60 }

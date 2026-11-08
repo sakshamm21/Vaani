@@ -291,6 +291,31 @@ pub fn voiced_ms(samples: &[f32]) -> u32 {
     (frames * 20) as u32
 }
 
+/// Raise quiet speech (a laptop mic across the room, a whisper) to a normal level before it
+/// goes to the speech model. The level is set from the loudest 0.1 % of samples, so a single
+/// click doesn't count; gain is capped at 10x (20 dB) so background hiss stays quiet, and
+/// recordings that are already loud enough are left as they are. Returns the gain used.
+pub fn normalize(samples: &mut [f32]) -> f32 {
+    const TARGET: f32 = 0.5;
+    const LOUD_ENOUGH: f32 = 0.25;
+    const MAX_GAIN: f32 = 10.0;
+    if samples.is_empty() {
+        return 1.0;
+    }
+    let mut mags: Vec<f32> = samples.iter().map(|v| v.abs()).collect();
+    let k = mags.len() - 1 - mags.len() / 1000;
+    let (_, peak, _) = mags.select_nth_unstable_by(k, f32::total_cmp);
+    let peak = *peak;
+    if peak >= LOUD_ENOUGH || peak <= 1e-4 {
+        return 1.0;
+    }
+    let gain = (TARGET / peak).min(MAX_GAIN);
+    for v in samples.iter_mut() {
+        *v = (*v * gain).clamp(-1.0, 1.0);
+    }
+    gain
+}
+
 pub fn resample(mono: &[f32], rate: u32) -> Result<Vec<f32>, AudioError> {
     if rate == TARGET_RATE || mono.is_empty() {
         return Ok(mono.to_vec());
@@ -331,6 +356,29 @@ pub fn wav_bytes(samples: &[f32]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn normalize_raises_quiet_speech_only() {
+        let tone =
+            |amp: f32| -> Vec<f32> { (0..16_000).map(|i| amp * (i as f32 * 0.05).sin()).collect() };
+        let mut quiet = tone(0.05);
+        let g = super::normalize(&mut quiet);
+        assert!((g - 10.0).abs() < 0.01, "{g}");
+        let mut soft = tone(0.1);
+        let g = super::normalize(&mut soft);
+        assert!((g - 5.0).abs() < 0.1, "{g}");
+        let peak = soft.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!((peak - 0.5).abs() < 0.02, "{peak}");
+        let mut loud = tone(0.6);
+        assert_eq!(super::normalize(&mut loud), 1.0);
+        let mut silent = vec![0.0; 1000];
+        assert_eq!(super::normalize(&mut silent), 1.0);
+        // One loud click doesn't stop quiet speech from being raised.
+        let mut clicked = tone(0.05);
+        clicked[100] = 0.9;
+        assert!(super::normalize(&mut clicked) > 9.0);
+    }
+
     use super::*;
 
     fn tone(ms: usize, amp: f32) -> Vec<f32> {

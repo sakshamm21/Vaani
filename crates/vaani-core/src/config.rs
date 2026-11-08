@@ -100,6 +100,8 @@ pub struct General {
     /// memory (about 800 MB for Parakeet) back to the system. It loads again when the key is
     /// pressed, while you speak. 0 keeps it loaded.
     pub free_model_after_mins: u32,
+    /// Once a day, ask GitHub whether a newer Vaani is out and say so. Off by default.
+    pub check_updates: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -124,6 +126,7 @@ impl Default for General {
             theme: Theme::System,
             onboarded: false,
             free_model_after_mins: 15,
+            check_updates: false,
         }
     }
 }
@@ -245,7 +248,7 @@ pub struct Cleanup {
     pub ai_timeout_ms: u64,
     /// Drop "um", "uh" and similar.
     pub remove_fillers: bool,
-    /// AI provider id: "groq", "openai", "anthropic", "ollama" or "openai_compatible".
+    /// AI provider id: "groq", "openai", "anthropic", "gemini", "ollama" or "openai_compatible".
     pub ai_provider: String,
     /// Empty uses the provider's default model.
     pub ai_model: String,

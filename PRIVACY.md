@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 4 November 2026
+Last updated: 8 November 2026
 
 Vaani is a voice dictation app for Linux and Windows. It is written by Saksham Malhotra
 and released as open source under the MIT licence. This policy covers every version of
@@ -40,7 +40,9 @@ the files above at any time.
 
 When you use a local model, the only network requests Vaani makes are model downloads from
 the sherpa-onnx project's releases on GitHub. With a cloud provider, Vaani also connects
-to that provider.
+to that provider. If you turn on "Tell me when a new version is out" (off by default),
+Vaani asks GitHub once a day for the latest Vaani release; the request carries only
+Vaani's version number.
 
 ## Children
 

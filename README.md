@@ -357,8 +357,9 @@ flowchart LR
   History offers to add it.
 - **AI clean-up** (off by default): a language model fixes punctuation, repeats and
   self-corrections ("at 3, actually 4" becomes "at 4"). Providers: Groq, OpenAI, Anthropic,
-  Ollama (local) or any OpenAI-compatible server. Replies that answer instead of transcribe,
-  or that change too many words, are discarded; a 2.5 s limit keeps it from slowing you down.
+  Google Gemini, Ollama (local) or any OpenAI-compatible server. Replies that answer instead
+  of transcribe, or that change too many words, are discarded; a 2.5 s limit keeps it from
+  slowing you down.
 - **Command mode:** select text, hold the command key and say "make this more formal" or
   "turn this into a list"; the selection is rewritten in place.
 - **Per-app rules:** `[[apps]]` entries in the config file change the style, insertion method
@@ -439,7 +440,9 @@ in `%LOCALAPPDATA%\sakshamm21\vaani\data\`; the autostart entry is the `Vaani` v
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 No accounts, analytics or telemetry. With a local model, the only network requests are model
-downloads from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases).
+downloads from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases),
+plus a daily look at Vaani's latest release on GitHub if you turn on the update check
+(**General → Tell me when a new version is out**, off by default).
 Audio is kept in memory and never written to disk. Cloud recognition sends audio, and AI
 clean-up sends text, only to the provider you chose.
 
