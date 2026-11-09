@@ -1544,6 +1544,12 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
             update_config(&shared, |c| c.general.autostart = v)
         })
     };
+    let updates = {
+        let shared = shared.clone();
+        switch(cfg.general.check_updates, move |v| {
+            update_config(&shared, |c| c.general.check_updates = v)
+        })
+    };
     const KEEP: &[(i64, &str)] = &[
         (0, "Don't keep"),
         (20, "Last 20"),
@@ -1581,6 +1587,11 @@ fn build_general(inner: &Rc<Inner>) -> gtk4::ScrolledWindow {
         .push((pause.clone(), |c| c.privacy.incognito));
     content.append(&card(&[
         row("Start Vaani when I log in", "", &s5),
+        row(
+            "Tell me when a new version is out",
+            "Once a day, asks GitHub for the latest release. Nothing else is sent.",
+            &updates,
+        ),
         row(
             "History",
             "How many dictations to keep. Older ones are deleted automatically. Audio is never stored.",

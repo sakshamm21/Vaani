@@ -105,6 +105,7 @@ pub fn run(show_settings: bool) -> Result<ExitCode> {
     let needs_setup =
         vaani_models::find(&config.engine.local_model).is_none_or(|m| !m.is_installed());
     Controller::spawn(config.clone(), shared.clone(), tx.clone(), rx);
+    crate::update::spawn(shared.clone());
 
     let watch_tx = tx.clone();
     let _watcher = ConfigWatcher::spawn(config_path, config, move |res| match res {

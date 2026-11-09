@@ -1121,6 +1121,11 @@ impl Job {
             tracing::debug!(audio_ms, voiced_ms = voiced, "no speech; ignored");
             return;
         }
+        let mut samples = samples;
+        let gain = vaani_audio::normalize(&mut samples);
+        if gain > 1.0 {
+            tracing::debug!(gain, "quiet recording raised");
+        }
         // A dictation made while the model is still loading waits for it instead of being
         // dropped. The pill keeps showing "Transcribing" meanwhile.
         let wait_until = Instant::now() + Duration::from_secs(120);

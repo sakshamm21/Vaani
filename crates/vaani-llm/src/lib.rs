@@ -73,6 +73,16 @@ pub const PROVIDERS: &[Provider] = &[
         key_id: "anthropic",
     },
     Provider {
+        id: "gemini",
+        name: "Google Gemini",
+        api: Api::OpenAi,
+        base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+        // Google's alias for its current small Flash model, so the default doesn't go stale.
+        default_model: "gemini-flash-lite-latest",
+        local: false,
+        key_id: "gemini",
+    },
+    Provider {
         id: "ollama",
         name: "Ollama (on this computer)",
         api: Api::OpenAi,
