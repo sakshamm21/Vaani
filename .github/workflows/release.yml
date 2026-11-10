@@ -58,11 +58,13 @@ jobs:
           ./scripts/package-windows.ps1
       # The same end-to-end check as CI, on the exact installer that is published.
       - name: Install, dictate into Notepad, uninstall
+        timeout-minutes: 10
         shell: powershell
         run: |
           $setup = (Get-ChildItem dist\vaani-*-setup.exe).FullName
           ./scripts/windows-smoke-test.ps1 -Setup $setup -Shots screenshots
       - name: Store package installs, starts and dictates
+        timeout-minutes: 10
         shell: powershell
         run: ./scripts/windows-msix-test.ps1 -Msix (Get-ChildItem dist\*.msix).FullName
       - uses: actions/upload-artifact@v4
