@@ -6,6 +6,8 @@
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use vaani_models::ModelInfo;
@@ -14,7 +16,7 @@ use crate::protocol::{self, Request, Response};
 use crate::{SttEngine, SttError, Transcript};
 
 struct Worker {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     tx: BufWriter<ChildStdin>,
     rx: BufReader<ChildStdout>,
 }
@@ -22,7 +24,61 @@ struct Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         let _ = protocol::write(&mut self.tx, &Request::Shutdown);
-        let _ = self.child.wait();
+        if let Ok(mut c) = self.child.lock() {
+            let _ = c.wait();
+        }
+    }
+}
+
+/// How long a transcription may take before the worker is taken to be hung: generous, since
+/// a large Whisper model on a slow CPU can run slower than real time.
+pub fn transcribe_limit(samples_16k: usize) -> Duration {
+    Duration::from_secs(30) + Duration::from_millis(samples_16k as u64 * 3000 / 16_000)
+}
+
+/// Kills the worker if the reply has not come by the deadline, so a hung model can never
+/// block dictation for good. Disarmed when dropped.
+struct Watchdog {
+    done: Arc<(Mutex<bool>, std::sync::Condvar)>,
+    fired: Arc<AtomicBool>,
+}
+
+impl Watchdog {
+    fn arm(child: Arc<Mutex<Child>>, limit: Duration) -> Self {
+        let done = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let fired = Arc::new(AtomicBool::new(false));
+        let (d, f) = (done.clone(), fired.clone());
+        let _ = std::thread::Builder::new()
+            .name("worker-watchdog".into())
+            .spawn(move || {
+                let (lock, cv) = &*d;
+                let Ok(g) = lock.lock() else { return };
+                let Ok((g, _)) = cv.wait_timeout_while(g, limit, |finished| !*finished) else {
+                    return;
+                };
+                if !*g {
+                    f.store(true, Ordering::SeqCst);
+                    tracing::error!(secs = limit.as_secs(), "speech worker hung; stopping it");
+                    if let Ok(mut c) = child.lock() {
+                        let _ = c.kill();
+                    }
+                }
+            });
+        Self { done, fired }
+    }
+
+    fn fired(&self) -> bool {
+        self.fired.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        let (lock, cv) = &*self.done;
+        if let Ok(mut g) = lock.lock() {
+            *g = true;
+        }
+        cv.notify_all();
     }
 }
 
@@ -109,7 +165,7 @@ impl LocalEngine {
             return Err(SttError::NotReady("worker pipes unavailable".into()));
         };
         let mut w = Worker {
-            child,
+            child: Arc::new(Mutex::new(child)),
             tx: BufWriter::new(stdin),
             rx: BufReader::new(stdout),
         };
@@ -157,6 +213,7 @@ impl LocalEngine {
             .worker
             .as_mut()
             .ok_or_else(|| SttError::NotReady("worker not running".into()))?;
+        let watchdog = Watchdog::arm(w.child.clone(), transcribe_limit(samples.len()));
         protocol::write(
             &mut w.tx,
             &Request::Transcribe {
@@ -164,7 +221,16 @@ impl LocalEngine {
                 language,
             },
         )?;
-        match protocol::read::<Response>(&mut w.rx)? {
+        let reply = protocol::read::<Response>(&mut w.rx);
+        if watchdog.fired() {
+            self.worker = None;
+            return Err(SttError::Engine(
+                "the speech model stopped responding; it will restart for the next dictation"
+                    .into(),
+            ));
+        }
+        drop(watchdog);
+        match reply? {
             Response::Text { text, ms } => Ok(Transcript {
                 text,
                 took: Duration::from_millis(ms),

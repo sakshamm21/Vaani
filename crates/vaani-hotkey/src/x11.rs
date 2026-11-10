@@ -106,6 +106,7 @@ pub(crate) fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, 
             let mut cmd: Vec<u32> = Vec::new();
             let mut down = false;
             let mut cmd_down = false;
+            let mut chorded = false;
             while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Ok(k) = key.lock() {
                     if *k != current {
@@ -139,6 +140,7 @@ pub(crate) fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, 
                     Event::XinputRawKeyPress(e) if hot.contains(&e.detail) => {
                         if !down && !e.flags.contains(KeyEventFlags::KEY_REPEAT) {
                             down = true;
+                            chorded = false;
                             send(HotkeyEvent::Down);
                         }
                     }
@@ -162,6 +164,12 @@ pub(crate) fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, 
                     }
                     Event::XinputRawKeyPress(e) if esc.contains(&e.detail) => {
                         send(HotkeyEvent::Escape)
+                    }
+                    Event::XinputRawKeyPress(e)
+                        if down && !chorded && !e.flags.contains(KeyEventFlags::KEY_REPEAT) =>
+                    {
+                        chorded = true;
+                        send(HotkeyEvent::Chord);
                     }
                     _ => {}
                 }

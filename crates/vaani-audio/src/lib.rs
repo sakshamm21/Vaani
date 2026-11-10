@@ -95,30 +95,13 @@ impl Recorder {
     pub fn start(&self, device: Option<&str>) -> Result<Recording, AudioError> {
         // Testing aid: VAANI_FAKE_MIC=/path/to/16k-or-any.wav replays a file instead of the mic.
         if let Some(path) = std::env::var_os("VAANI_FAKE_MIC") {
-            let mut r =
-                hound::WavReader::open(&path).map_err(|e| AudioError::Open(e.to_string()))?;
-            let spec = r.spec();
-            let ch = usize::from(spec.channels).max(1);
-            let raw: Vec<f32> = match spec.sample_format {
-                hound::SampleFormat::Float => r.samples::<f32>().flatten().collect(),
-                hound::SampleFormat::Int => {
-                    let scale = (1i64 << (spec.bits_per_sample - 1)) as f32;
-                    r.samples::<i32>()
-                        .flatten()
-                        .map(|v| v as f32 / scale)
-                        .collect()
-                }
-            };
-            let mono: Vec<f32> = raw
-                .chunks(ch)
-                .map(|f| f.iter().sum::<f32>() / ch as f32)
-                .collect();
+            let (mono, rate) = read_wav_mono(std::path::Path::new(&path))?;
             let rms = (mono.iter().map(|v| v * v).sum::<f32>() / mono.len().max(1) as f32).sqrt();
             self.level.set(rms.min(1.0));
             return Ok(Recording {
                 stream: None,
                 samples: Arc::new(Mutex::new(mono)),
-                rate: spec.sample_rate,
+                rate,
                 started: Instant::now(),
                 level: self.level.clone(),
             });
@@ -314,6 +297,34 @@ pub fn normalize(samples: &mut [f32]) -> f32 {
         *v = (*v * gain).clamp(-1.0, 1.0);
     }
     gain
+}
+
+/// A WAV file as mono samples and its sample rate.
+pub fn read_wav_mono(path: &std::path::Path) -> Result<(Vec<f32>, u32), AudioError> {
+    let mut r = hound::WavReader::open(path).map_err(|e| AudioError::Open(e.to_string()))?;
+    let spec = r.spec();
+    let ch = usize::from(spec.channels).max(1);
+    let raw: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => r.samples::<f32>().flatten().collect(),
+        hound::SampleFormat::Int => {
+            let scale = (1i64 << (spec.bits_per_sample - 1)) as f32;
+            r.samples::<i32>()
+                .flatten()
+                .map(|v| v as f32 / scale)
+                .collect()
+        }
+    };
+    let mono = raw
+        .chunks(ch)
+        .map(|f| f.iter().sum::<f32>() / ch as f32)
+        .collect();
+    Ok((mono, spec.sample_rate))
+}
+
+/// A WAV file as 16 kHz mono, ready for speech-to-text.
+pub fn read_wav_16k(path: &std::path::Path) -> Result<Vec<f32>, AudioError> {
+    let (mono, rate) = read_wav_mono(path)?;
+    resample(&mono, rate)
 }
 
 pub fn resample(mono: &[f32], rate: u32) -> Result<Vec<f32>, AudioError> {

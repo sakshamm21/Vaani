@@ -6,6 +6,7 @@
 
 mod ai_cmd;
 mod autostart;
+mod bench;
 mod cli;
 mod controller;
 mod daemon;
@@ -90,6 +91,12 @@ fn main() -> ExitCode {
         },
         Cmd::History { count } => models_cmd::history(count),
         Cmd::Doctor { json } => doctor::run(json),
+        Cmd::Bench {
+            dir,
+            record,
+            model,
+            cloud,
+        } => bench::run(dir, record, model, cloud),
         Cmd::Cleanup { text, file, models } => ai_cmd::run(text, file, models),
     };
     match result {

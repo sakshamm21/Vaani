@@ -93,10 +93,32 @@ pub struct CloudEngine {
     pub provider: &'static Provider,
     pub base_url: String,
     pub model: String,
+    /// The model was left at the provider's default, so Vaani may pick a better one for the
+    /// language (Groq: full Whisper Large v3 for Hindi and Hinglish).
+    model_is_default: bool,
     pub api_key: String,
     /// The user's Dictionary words, sent as hints where the API takes them.
     pub vocabulary: Vec<String>,
+    /// What was said just before (the previous piece or dictation), for engines that take
+    /// a prompt: they keep spelling, casing and language consistent with it.
+    pub context: String,
     client: reqwest::blocking::Client,
+    /// The time allowed for the request in flight, from the length of its audio.
+    limit: Duration,
+}
+
+/// How long one cloud transcription may take before Vaani gives up on it (and uses the
+/// local model if one is installed): 10 s, plus 1 s for every 3 s of audio, at most 2 min.
+pub fn request_limit(samples_16k: usize) -> Duration {
+    let audio_ms = samples_16k as u64 * 1000 / 16_000;
+    Duration::from_millis((10_000 + audio_ms / 3).min(120_000))
+}
+
+/// Audio as it is uploaded.
+struct Audio {
+    bytes: Vec<u8>,
+    mime: &'static str,
+    file_name: &'static str,
 }
 
 impl CloudEngine {
@@ -125,9 +147,12 @@ impl CloudEngine {
             } else {
                 model.into()
             },
+            model_is_default: model.is_empty() || model == provider.default_model,
             api_key: api_key.into(),
             vocabulary: Vec::new(),
+            context: String::new(),
             client,
+            limit: Duration::from_secs(60),
         })
     }
 }
@@ -143,6 +168,10 @@ impl SttEngine for CloudEngine {
 
     fn set_vocabulary(&mut self, words: &[String]) {
         self.vocabulary = words.to_vec();
+    }
+
+    fn set_context(&mut self, text: &str) {
+        self.context = crate::context_tail(text);
     }
 
     fn warm(&mut self) {
@@ -167,20 +196,38 @@ impl SttEngine for CloudEngine {
 
     fn transcribe(&mut self, samples: &[f32], language: &str) -> Result<Transcript, SttError> {
         let t = Instant::now();
-        let wav = wav_16k(samples);
+        self.limit = request_limit(samples.len());
+        let audio = self.encode(samples);
         let hinglish = language.eq_ignore_ascii_case(crate::HINGLISH);
         let lang = crate::base_language(language);
-        let text = match self.provider.api {
-            Api::OpenAi => self.openai(wav, lang, &crate::prompt(language, &self.vocabulary))?,
-            // Nova-3 understands Hindi and English mixed in one sentence as "multi".
-            Api::Deepgram if hinglish => self.deepgram(wav, Some("multi"))?,
-            Api::Deepgram => self.deepgram(wav, lang)?,
-            // Scribe handles mixed speech best when it detects the languages itself.
-            Api::ElevenLabs if hinglish => self.elevenlabs(wav, None)?,
-            Api::ElevenLabs => self.elevenlabs(wav, lang)?,
-            Api::AssemblyAi => self.assemblyai(wav, lang)?,
-            Api::Sarvam => self.sarvam(wav, lang)?,
+        let multi = self.model.starts_with("nova-3") || self.model.starts_with("nova-2");
+        let prompt = if self.instruction_prompt() {
+            crate::instruction_prompt(language, &self.vocabulary, &self.context)
+        } else {
+            crate::prompt_with_context(language, &self.vocabulary, &self.context)
         };
+        let text = match self.provider.api {
+            Api::OpenAi => self.openai(audio, lang, &prompt)?,
+            // Nova understands languages mixed in one sentence (Hinglish, or switching
+            // between English and another language) as "multi"; detection picks just one.
+            Api::Deepgram if multi && (hinglish || lang.is_none()) => {
+                self.deepgram(audio, Some("multi"))?
+            }
+            Api::Deepgram => self.deepgram(audio, lang)?,
+            // Scribe handles mixed speech best when it detects the languages itself.
+            Api::ElevenLabs if hinglish => self.elevenlabs(audio, None)?,
+            Api::ElevenLabs => self.elevenlabs(audio, lang)?,
+            Api::AssemblyAi => self.assemblyai(audio, lang)?,
+            Api::Sarvam => self.sarvam(audio, lang)?,
+        };
+        // A prompt-taking model sometimes repeats its prompt instead of hearing anything.
+        if !prompt.is_empty() && crate::echoes_prompt(&text, &prompt) {
+            tracing::debug!("cloud engine repeated its prompt; ignored");
+            return Ok(Transcript {
+                text: String::new(),
+                took: t.elapsed(),
+            });
+        }
         Ok(Transcript {
             text,
             took: t.elapsed(),
@@ -188,10 +235,10 @@ impl SttEngine for CloudEngine {
     }
 }
 
-fn wav_part(wav: Vec<u8>) -> Result<reqwest::blocking::multipart::Part, SttError> {
-    reqwest::blocking::multipart::Part::bytes(wav)
-        .file_name("audio.wav")
-        .mime_str("audio/wav")
+fn audio_part(audio: Audio) -> Result<reqwest::blocking::multipart::Part, SttError> {
+    reqwest::blocking::multipart::Part::bytes(audio.bytes)
+        .file_name(audio.file_name)
+        .mime_str(audio.mime)
         .map_err(|e| SttError::Engine(e.to_string()))
 }
 
@@ -203,9 +250,39 @@ fn str_at(body: &serde_json::Value, pointer: &str) -> String {
 }
 
 impl CloudEngine {
+    /// GPT-4o transcription models read their prompt as instructions; Whisper models read it
+    /// as text that came just before the audio.
+    fn instruction_prompt(&self) -> bool {
+        self.provider.api == Api::OpenAi && self.model.starts_with("gpt-4o")
+    }
+
+    /// FLAC for the hosted services (about half the size of WAV, same audio, so long
+    /// dictations upload faster); WAV for self-hosted servers and Sarvam.
+    fn encode(&self, samples: &[f32]) -> Audio {
+        let flac_ok = matches!(
+            self.provider.id,
+            "groq" | "openai" | "deepgram" | "elevenlabs" | "assemblyai"
+        );
+        if flac_ok {
+            if let Some(bytes) = flac_16k(samples) {
+                return Audio {
+                    bytes,
+                    mime: "audio/flac",
+                    file_name: "audio.flac",
+                };
+            }
+        }
+        Audio {
+            bytes: wav_16k(samples),
+            mime: "audio/wav",
+            file_name: "audio.wav",
+        }
+    }
+
     /// Send a request and return the JSON body, turning API errors into readable messages.
     fn call(&self, req: reqwest::blocking::RequestBuilder) -> Result<serde_json::Value, SttError> {
         let resp = req
+            .timeout(self.limit)
             .send()
             .map_err(|e| SttError::Engine(format!("network: {e}")))?;
         let status = resp.status();
@@ -232,7 +309,7 @@ impl CloudEngine {
         Ok(body)
     }
 
-    fn deepgram(&self, wav: Vec<u8>, lang: Option<&str>) -> Result<String, SttError> {
+    fn deepgram(&self, audio: Audio, lang: Option<&str>) -> Result<String, SttError> {
         let mut query = vec![("model", self.model.as_str()), ("smart_format", "true")];
         match lang {
             Some(l) => query.push(("language", l)),
@@ -255,8 +332,8 @@ impl CloudEngine {
                 .post(format!("{}/listen", self.base_url))
                 .query(&query)
                 .header("Authorization", format!("Token {}", self.api_key))
-                .header("Content-Type", "audio/wav")
-                .body(wav),
+                .header("Content-Type", audio.mime)
+                .body(audio.bytes),
         )?;
         Ok(str_at(
             &body,
@@ -264,9 +341,9 @@ impl CloudEngine {
         ))
     }
 
-    fn elevenlabs(&self, wav: Vec<u8>, lang: Option<&str>) -> Result<String, SttError> {
+    fn elevenlabs(&self, audio: Audio, lang: Option<&str>) -> Result<String, SttError> {
         let mut form = reqwest::blocking::multipart::Form::new()
-            .part("file", wav_part(wav)?)
+            .part("file", audio_part(audio)?)
             .text("model_id", self.model.clone())
             .text("tag_audio_events", "false");
         if let Some(l) = lang {
@@ -282,13 +359,13 @@ impl CloudEngine {
     }
 
     /// AssemblyAI has no one-shot endpoint: upload, ask for a transcript, then wait for it.
-    fn assemblyai(&self, wav: Vec<u8>, lang: Option<&str>) -> Result<String, SttError> {
+    fn assemblyai(&self, audio: Audio, lang: Option<&str>) -> Result<String, SttError> {
         let auth = |r: reqwest::blocking::RequestBuilder| r.header("Authorization", &self.api_key);
         let up = self.call(auth(
             self.client
                 .post(format!("{}/upload", self.base_url))
                 .header("Content-Type", "application/octet-stream")
-                .body(wav),
+                .body(audio.bytes),
         ))?;
         let audio_url = str_at(&up, "/upload_url");
         let mut job = serde_json::json!({
@@ -307,7 +384,7 @@ impl CloudEngine {
                 .json(&job),
         ))?;
         let id = str_at(&started, "/id");
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = Instant::now() + self.limit;
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(250));
             let r = self.call(auth(
@@ -328,7 +405,7 @@ impl CloudEngine {
         Err(SttError::Engine("AssemblyAI took too long".into()))
     }
 
-    fn sarvam(&self, wav: Vec<u8>, lang: Option<&str>) -> Result<String, SttError> {
+    fn sarvam(&self, audio: Audio, lang: Option<&str>) -> Result<String, SttError> {
         // Sarvam wants codes such as "hi-IN"; "unknown" lets it detect the language.
         let code = match lang {
             Some(l) if l.contains('-') => l.to_string(),
@@ -336,7 +413,7 @@ impl CloudEngine {
             None => "unknown".into(),
         };
         let form = reqwest::blocking::multipart::Form::new()
-            .part("file", wav_part(wav)?)
+            .part("file", audio_part(audio)?)
             .text("model", self.model.clone())
             .text("language_code", code);
         let body = self.call(
@@ -348,10 +425,45 @@ impl CloudEngine {
         Ok(str_at(&body, "/transcript"))
     }
 
-    fn openai(&self, wav: Vec<u8>, lang: Option<&str>, prompt: &str) -> Result<String, SttError> {
+    /// The model to ask for: on Groq with the default model, Hindi and Hinglish go to full
+    /// Whisper Large v3, which hears Hindi clearly better than the Turbo version.
+    fn model_for(&self, lang: Option<&str>) -> String {
+        if self.provider.id == "groq" && self.model_is_default && lang == Some("hi") {
+            return "whisper-large-v3".into();
+        }
+        self.model.clone()
+    }
+
+    fn openai(&self, audio: Audio, lang: Option<&str>, prompt: &str) -> Result<String, SttError> {
+        let model = self.model_for(lang);
+        if model == self.model {
+            return self.openai_with(audio, &model, lang, prompt);
+        }
+        // The language-specific model may be gone from the provider; then use the usual one.
+        let copy = Audio {
+            bytes: audio.bytes.clone(),
+            ..audio
+        };
+        self.openai_with(audio, &model, lang, prompt).or_else(|e| {
+            // A network failure would only fail again, and slower.
+            if e.to_string().contains("network:") {
+                return Err(e);
+            }
+            tracing::warn!(%model, "{e}; trying {}", self.model);
+            self.openai_with(copy, &self.model, lang, prompt)
+        })
+    }
+
+    fn openai_with(
+        &self,
+        audio: Audio,
+        model: &str,
+        lang: Option<&str>,
+        prompt: &str,
+    ) -> Result<String, SttError> {
         let mut form = reqwest::blocking::multipart::Form::new()
-            .part("file", wav_part(wav)?)
-            .text("model", self.model.clone())
+            .part("file", audio_part(audio)?)
+            .text("model", model.to_string())
             .text("response_format", "json");
         if let Some(l) = lang {
             form = form.text("language", l.to_string());
@@ -369,6 +481,25 @@ impl CloudEngine {
         let body = self.call(req)?;
         Ok(str_at(&body, "/text"))
     }
+}
+
+/// 16 kHz mono 16-bit FLAC. None if the encoder fails (WAV is sent instead).
+fn flac_16k(samples: &[f32]) -> Option<Vec<u8>> {
+    use flacenc::component::BitRepr;
+    use flacenc::error::Verify;
+    if samples.is_empty() {
+        return None;
+    }
+    let pcm: Vec<i32> = samples
+        .iter()
+        .map(|s| i32::from((s.clamp(-1.0, 1.0) * 32767.0) as i16))
+        .collect();
+    let config = flacenc::config::Encoder::default().into_verified().ok()?;
+    let source = flacenc::source::MemSource::from_samples(&pcm, 1, 16, 16_000);
+    let stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size).ok()?;
+    let mut sink = flacenc::bitsink::ByteSink::new();
+    stream.write(&mut sink).ok()?;
+    Some(sink.as_slice().to_vec())
 }
 
 fn wav_16k(samples: &[f32]) -> Vec<u8> {
@@ -412,6 +543,28 @@ mod tests {
         assert_eq!(e.base_url, "http://x/v1");
         assert_eq!(e.model, "whisper-1");
         assert!(e.is_cloud());
+        let g = CloudEngine::new(provider("groq").unwrap(), "", "", "k").unwrap();
+        assert_eq!(g.model_for(Some("hi")), "whisper-large-v3");
+        assert_eq!(g.model_for(Some("en")), "whisper-large-v3-turbo");
+        let pinned = CloudEngine::new(provider("groq").unwrap(), "", "distil", "k").unwrap();
+        assert_eq!(pinned.model_for(Some("hi")), "distil");
+    }
+
+    #[test]
+    fn flac_is_smaller_than_wav() {
+        // One second of a voice-like tone.
+        let s: Vec<f32> = (0..16_000)
+            .map(|i| 0.3 * (i as f32 * 0.07).sin() * (i as f32 * 0.003).sin())
+            .collect();
+        let flac = flac_16k(&s).unwrap();
+        assert_eq!(&flac[..4], b"fLaC");
+        assert!(flac.len() < wav_16k(&s).len() * 3 / 4, "{}", flac.len());
+    }
+
+    #[test]
+    fn limits_grow_with_audio() {
+        assert_eq!(request_limit(16_000 * 3), Duration::from_secs(11));
+        assert_eq!(request_limit(16_000 * 3000), Duration::from_secs(120));
     }
 
     #[test]

@@ -20,6 +20,60 @@ struct Report {
     worker: Check,
     running: bool,
     components: Vec<Component>,
+    dictations: Option<Dictations>,
+}
+
+/// Delay and failures of the most recent dictations, from history (numbers only, no text).
+#[derive(Serialize)]
+struct Dictations {
+    count: usize,
+    /// Saved but never typed or pasted into an app.
+    not_inserted: usize,
+    /// Key release to text inserted, in milliseconds.
+    p50_ms: i64,
+    p95_ms: i64,
+    /// The same for clips of 10 seconds or less, the build plan's yardstick.
+    short_p95_ms: i64,
+}
+
+/// The value at fraction `q` (0..1) of sorted values.
+fn quantile(sorted: &[i64], q: f64) -> i64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let i = ((sorted.len() - 1) as f64 * q).round() as usize;
+    sorted[i.min(sorted.len() - 1)]
+}
+
+fn dictations() -> Option<Dictations> {
+    let path = vaani_core::paths::data_dir()?.join("history.db");
+    if !path.exists() {
+        return None;
+    }
+    let h = vaani_store::History::open(&path).ok()?;
+    let recent = h.recent(200).ok()?;
+    if recent.is_empty() {
+        return None;
+    }
+    let mut all: Vec<i64> = recent
+        .iter()
+        .filter(|e| e.inserted && e.latency_ms > 0)
+        .map(|e| e.latency_ms)
+        .collect();
+    all.sort_unstable();
+    let mut short: Vec<i64> = recent
+        .iter()
+        .filter(|e| e.inserted && e.latency_ms > 0 && e.audio_ms <= 10_000)
+        .map(|e| e.latency_ms)
+        .collect();
+    short.sort_unstable();
+    Some(Dictations {
+        count: recent.len(),
+        not_inserted: recent.iter().filter(|e| !e.inserted).count(),
+        p50_ms: quantile(&all, 0.5),
+        p95_ms: quantile(&all, 0.95),
+        short_p95_ms: quantile(&short, 0.95),
+    })
 }
 
 #[derive(Serialize)]
@@ -156,6 +210,7 @@ pub fn run(json: bool) -> Result<ExitCode> {
 fn collect() -> Report {
     let mut r = collect_base();
     r.components = components(&r.session);
+    r.dictations = dictations();
     r
 }
 
@@ -214,6 +269,7 @@ fn collect_base() -> Report {
         worker: worker_check(),
         running: running(),
         components: Vec::new(),
+        dictations: None,
     }
 }
 
@@ -367,6 +423,12 @@ fn print_vaani(r: &Report) {
             format!("problem: {}", r.worker.detail)
         }
     );
+    if let Some(d) = &r.dictations {
+        println!(
+            "  Last {} dictations: {} ms typical, {} ms slowest 5% ({} ms for clips up to 10 s), {} not inserted",
+            d.count, d.p50_ms, d.p95_ms, d.short_p95_ms, d.not_inserted
+        );
+    }
     println!();
     println!("Components");
     for c in &r.components {

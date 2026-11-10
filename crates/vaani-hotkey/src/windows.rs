@@ -339,10 +339,14 @@ fn on_key(vk: u32, down: bool) {
                     } else {
                         send(HotkeyEvent::Up);
                     }
-                } else if active && down && !k.contains(vk) && k.0.len() > 1 && vk != VK_ESCAPE {
-                    // Another key joined the chord (Ctrl+Win+D): that is a different
-                    // shortcut, so drop the recording.
-                    send(HotkeyEvent::Escape);
+                } else if active && down && !k.contains(vk) && vk != VK_ESCAPE {
+                    // Another key joined the hotkey (Ctrl+Win+D, Right Ctrl+C): that is a
+                    // different shortcut, so drop the recording.
+                    send(if k.0.len() > 1 {
+                        HotkeyEvent::Escape
+                    } else {
+                        HotkeyEvent::Chord
+                    });
                 }
             }
             if let Some(c) = &command {
