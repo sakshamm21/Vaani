@@ -20,6 +20,8 @@ const NOT_FOUND: i32 = 2;
 const ACCESS_DENIED: i32 = 5;
 /// ERROR_PIPE_BUSY: the server is between two connections.
 const PIPE_BUSY: i32 = 231;
+/// How long a CLI command waits for the running app's reply.
+const REPLY_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// One pipe per user, so two people signed in on one PC each get their own Vaani.
 fn name() -> String {
@@ -68,13 +70,19 @@ pub fn try_call(call: Call) -> Result<Option<String>> {
                 Err(e) => return Err(e).context("could not reach the running Vaani"),
             }
         };
-        let (rd, mut wr) = tokio::io::split(pipe);
-        wr.write_all(format!("{}\n", call.name()).as_bytes())
-            .await?;
-        wr.flush().await?;
-        let mut line = String::new();
-        BufReader::new(rd).read_line(&mut line).await?;
-        let line = line.trim_end().to_string();
+        let talk = async move {
+            let (rd, mut wr) = tokio::io::split(pipe);
+            wr.write_all(format!("{}\n", call.name()).as_bytes())
+                .await?;
+            wr.flush().await?;
+            let mut line = String::new();
+            BufReader::new(rd).read_line(&mut line).await?;
+            anyhow::Ok(line.trim_end().to_string())
+        };
+        // A reply never takes long; don't let a stuck app hang the command forever.
+        let line = tokio::time::timeout(REPLY_LIMIT, talk)
+            .await
+            .map_err(|_| anyhow::anyhow!("the running Vaani did not answer"))??;
         Ok(call.has_output().then_some(line))
     })
 }

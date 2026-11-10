@@ -99,6 +99,7 @@ jobs:
             dist/*.zip
             dist/SHA256SUMS-windows
       - name: Install, dictate into Notepad, uninstall
+        timeout-minutes: 10
         shell: powershell
         run: |
           $setup = (Get-ChildItem dist\vaani-*-setup.exe).FullName
@@ -110,6 +111,7 @@ jobs:
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           & "$env:RUNNER_TEMP\portable\Vaani\bin\vaani.exe" --version | Out-String
       - name: Store package installs, starts and dictates
+        timeout-minutes: 10
         shell: powershell
         run: ./scripts/windows-msix-test.ps1 -Msix (Get-ChildItem dist\*.msix).FullName
       - uses: actions/upload-artifact@v4
