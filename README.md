@@ -92,7 +92,7 @@
 
 ### Windows
 
-Download `vaani-0.5.3-windows-x64-setup.exe` from the
+Download `vaani-0.5.4-windows-x64-setup.exe` from the
 [latest release](https://github.com/sakshamm21/Vaani/releases/latest) and run it. It installs
 for your user only, so it needs no administrator rights, and adds Vaani to the Start menu.
 
@@ -105,7 +105,7 @@ single key or keys pressed together. To uninstall, use
 **Settings → Apps → Installed apps → Vaani**; it asks whether to keep your settings, history
 and models.
 
-For a portable copy, unpack `vaani-0.5.3-windows-x64-portable.zip` anywhere and run
+For a portable copy, unpack `vaani-0.5.4-windows-x64-portable.zip` anywhere and run
 `bin\vaani.exe`.
 
 ### Linux packages
@@ -114,9 +114,9 @@ Download the package for your distribution from the
 [latest release](https://github.com/sakshamm21/Vaani/releases/latest) and install it:
 
 ```sh
-sudo apt install ./vaani_0.5.3_amd64.deb                                 # Debian, Ubuntu, Mint, Pop!_OS
-sudo dnf install ./vaani-0.5.3-1.x86_64.rpm                              # Fedora
-sudo zypper install --allow-unsigned-rpm ./vaani-0.5.3-1.x86_64.rpm      # openSUSE
+sudo apt install ./vaani_0.5.4_amd64.deb                                 # Debian, Ubuntu, Mint, Pop!_OS
+sudo dnf install ./vaani-0.5.4-1.x86_64.rpm                              # Fedora
+sudo zypper install --allow-unsigned-rpm ./vaani-0.5.4-1.x86_64.rpm      # openSUSE
 ```
 
 On Arch, build the `vaani-bin` package from the release's `PKGBUILD`:
@@ -134,7 +134,7 @@ The packages set everything up, Wayland included: nothing to add to a group, no 
 setting to change, no need to log out or restart. On GNOME and KDE Plasma the desktop asks
 once to confirm Vaani's shortcut.
 
-Other distributions can use `vaani-0.5.3-x86_64-linux.tar.gz`: unpack it and run
+Other distributions can use `vaani-0.5.4-x86_64-linux.tar.gz`: unpack it and run
 `./install.sh` to install under `~/.local` (it needs GTK 4 and ALSA). `SHA256SUMS` lists the
 checksum of every file.
 
@@ -423,6 +423,7 @@ whether from the settings window or a text editor.
 | `vaani models [download <id> [--use] \| remove <id>]` | Manage local models |
 | `vaani cleanup "<text>"` | Try AI clean-up with your settings |
 | `vaani doctor [--json]` | Diagnostic report for bug reports |
+| `vaani bench <dir> [--record] [--model <id> \| --cloud]` | Record a test set of your voice, or measure word error rate and speed on it |
 | `vaani quit` | Stop Vaani |
 
 ## Files and privacy

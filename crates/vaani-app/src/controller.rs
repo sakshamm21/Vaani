@@ -92,45 +92,143 @@ impl Early {
     }
 }
 
-/// Where to end the next piece: the middle of the last pause of at least 300 ms, or the
-/// quietest moment when the piece is getting very long. None means keep waiting.
-fn find_cut(audio: &[f32], from: usize) -> Option<usize> {
+/// Whisper reads at most 30 s per call (sherpa-onnx drops the rest), and Moonshine is
+/// made for short phrases, so their pieces stay under this.
+const PIECE_SHORT: usize = 16_000 * 25;
+
+/// Where to end the next piece: the middle of the last clear pause (600 ms, or 300 ms once
+/// the piece is long), or the quietest moment when the piece reaches `force` samples.
+/// "Quiet" is measured against the recording's own background level, so a quiet laptop mic
+/// is not cut in the middle of a word. None means keep waiting.
+fn find_cut(audio: &[f32], from: usize, force: usize) -> Option<usize> {
     const FRAME: usize = 320; // 20 ms
     let end = audio.len().saturating_sub(16_000 / 2);
-    if end <= from + PIECE_MIN {
+    let min = PIECE_MIN.min(force * 3 / 5);
+    if end <= from + min {
         return None;
     }
     let rms = |i: usize| {
         let f = &audio[i..i + FRAME];
         (f.iter().map(|v| v * v).sum::<f32>() / FRAME as f32).sqrt()
     };
-    let start = from + PIECE_MIN;
-    let mut quiet_run = 0;
-    let mut i = end - FRAME;
-    while i >= start {
-        if rms(i) < 0.01 {
-            quiet_run += 1;
-            if quiet_run >= 15 {
-                return Some(i + quiet_run * FRAME / 2);
-            }
-        } else {
-            quiet_run = 0;
-        }
-        if i < FRAME {
+    let start = from + min;
+    let levels: Vec<(usize, f32)> = (from..end - FRAME)
+        .step_by(FRAME)
+        .map(|i| (i, rms(i)))
+        .collect();
+    let mut sorted: Vec<f32> = levels.iter().map(|(_, r)| *r).collect();
+    sorted.sort_by(f32::total_cmp);
+    // Quiet means near the background (the quietest 1 % of frames; pauses are rare in fluent
+    // speech) and well under the typical level, so a quiet mic's speech never counts.
+    let floor = sorted.get(sorted.len() / 100).copied().unwrap_or(0.0);
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+    let quiet = (floor * 3.0).min(median * 0.3).clamp(0.0005, 0.01);
+    let long = end - from >= force * 4 / 5;
+    for need in [30usize, 15] {
+        if need == 15 && !long {
             break;
         }
-        i -= FRAME;
+        let mut run = 0;
+        for &(i, r) in levels.iter().rev().take_while(|(i, _)| *i >= start) {
+            if r < quiet {
+                run += 1;
+                if run >= need {
+                    return Some(i + run * FRAME / 2);
+                }
+            } else {
+                run = 0;
+            }
+        }
     }
-    if end - from < PIECE_FORCE {
+    if end - from < force {
         return None;
     }
-    (start..end - FRAME)
-        .step_by(FRAME)
-        .min_by(|a, b| rms(*a).total_cmp(&rms(*b)))
-        .map(|i| i + FRAME / 2)
+    levels
+        .iter()
+        .filter(|(i, _)| *i >= start)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i + FRAME / 2)
+}
+
+/// Split audio into pieces no longer than `max`, cut at pauses.
+pub(crate) fn split_pieces(audio: &[f32], max: usize) -> Vec<&[f32]> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while audio.len() - from > max {
+        // Look for a cut inside the next `max` samples (plus the half second find_cut skips).
+        let window = &audio[..(from + max + 8_000).min(audio.len())];
+        let cut = find_cut(window, from, max)
+            .filter(|c| *c > from && *c <= from + max)
+            .unwrap_or(from + max);
+        out.push(&audio[from..cut]);
+        from = cut;
+    }
+    out.push(&audio[from..]);
+    out
+}
+
+/// The longest piece the engine should get at once.
+pub(crate) fn piece_limit(config: &Config) -> usize {
+    if config.engine.kind == EngineKind::Cloud {
+        return PIECE_FORCE;
+    }
+    match vaani_models::find(&config.engine.local_model).map(|m| m.kind) {
+        Some(vaani_models::ModelKind::Whisper | vaani_models::ModelKind::Moonshine) => PIECE_SHORT,
+        _ => PIECE_FORCE,
+    }
 }
 
 const MAX_RECORDING: Duration = Duration::from_secs(5 * 60);
+/// After the key is let go, keep listening this long: people release the key while the
+/// last syllable is still coming out.
+const KEY_UP_TAIL: Duration = Duration::from_millis(150);
+/// Another key pressed this soon after the hotkey means the hotkey was part of a shortcut.
+const CHORD_WINDOW: Duration = Duration::from_millis(1500);
+
+/// Dictations can overlap (a new one starts while the last is still being transcribed), so
+/// each takes a ticket and inserts its text only when every earlier one is done.
+#[derive(Default)]
+struct InsertOrder {
+    state: Mutex<(u64, std::collections::BTreeSet<u64>)>,
+    turn: std::sync::Condvar,
+}
+
+impl InsertOrder {
+    /// Wait until every earlier ticket has finished (at most `limit`).
+    fn wait_turn(&self, ticket: u64, limit: Duration) {
+        let Ok(guard) = self.state.lock() else { return };
+        let _ = self
+            .turn
+            .wait_timeout_while(guard, limit, |(next, _)| *next < ticket);
+    }
+
+    /// This ticket is done, inserted or not.
+    fn done(&self, ticket: u64) {
+        if let Ok(mut g) = self.state.lock() {
+            let (next, finished) = &mut *g;
+            finished.insert(ticket);
+            while finished.remove(next) {
+                *next += 1;
+            }
+        }
+        self.turn.notify_all();
+    }
+}
+
+/// Reports a dictation job as finished however it ends, a panic included, so the app can
+/// never be left stuck in "Transcribing".
+struct JobGuard {
+    tx: Sender<Input>,
+    order: Arc<InsertOrder>,
+    ticket: u64,
+}
+
+impl Drop for JobGuard {
+    fn drop(&mut self) {
+        self.order.done(self.ticket);
+        let _ = self.tx.send(Input::JobDone);
+    }
+}
 
 pub enum Input {
     Hotkey(HotkeyEvent),
@@ -197,9 +295,16 @@ pub struct Controller {
     latched: bool,
     /// The current dictation is a command for the selected text.
     command_mode: bool,
-    job_cancel: Option<Arc<AtomicBool>>,
+    /// Cancel flags of the dictations still being processed.
+    job_cancels: Vec<Arc<AtomicBool>>,
+    /// Dictation jobs still running.
+    jobs: usize,
+    order: Arc<InsertOrder>,
+    next_ticket: u64,
     /// When the speaker was last heard, for the hands-free silence stop.
     last_voice: Option<Instant>,
+    /// The quietest input level of the current recording, in dBFS.
+    noise_floor_db: f32,
     early: Early,
     preview: Preview,
     /// With a cloud engine, the local model that reads the live preview (loaded on first use).
@@ -272,8 +377,12 @@ impl Controller {
             down_at: None,
             latched: false,
             command_mode: false,
-            job_cancel: None,
+            job_cancels: Vec::new(),
+            jobs: 0,
+            order: Arc::new(InsertOrder::default()),
+            next_ticket: 0,
             last_voice: None,
+            noise_floor_db: 0.0,
             early: Early::default(),
             preview: Preview::default(),
             preview_engine: Arc::new(Mutex::new(None)),
@@ -497,20 +606,27 @@ impl Controller {
         }
         self.early.last_check = Some(Instant::now());
         let Ok(audio) = rec.peek() else { return };
-        let Some(cut) = find_cut(&audio, self.early.offset) else {
+        let Some(cut) = find_cut(&audio, self.early.offset, piece_limit(&self.config)) else {
             return;
         };
-        let piece = audio[self.early.offset..cut].to_vec();
+        let mut piece = audio[self.early.offset..cut].to_vec();
+        // The same quiet-speech gain the final pass gets.
+        vaani_audio::normalize(&mut piece);
+        let context = self.early.texts.join(" ");
+        let vocabulary = dictionary_words(&self.config);
         let (tx, rx) = crossbeam_channel::bounded(1);
         let engine = self.engine.clone();
         let language = self.config.general.language.clone();
         let _ = thread::Builder::new().name("early".into()).spawn(move || {
             let r = match engine.lock() {
                 Ok(mut slot) => match slot.as_mut() {
-                    Some(e) => e
-                        .transcribe(&piece, &language)
-                        .map(|t| t.text)
-                        .map_err(|e| e.to_string()),
+                    Some(e) => {
+                        e.set_vocabulary(&vocabulary);
+                        e.set_context(&context);
+                        e.transcribe(&piece, &language)
+                            .map(|t| t.text)
+                            .map_err(|e| e.to_string())
+                    }
                     None => Err("no engine".into()),
                 },
                 Err(_) => Err("engine lock".into()),
@@ -645,8 +761,14 @@ impl Controller {
         let rms = self.shared.level.get();
         let db = 20.0 * rms.max(1e-6).log10();
         let now = Instant::now();
-        // About -42 dBFS: above room noise, below quiet speech.
-        if db > -42.0 {
+        // Speech is judged against this recording's own background: 10 dB above the
+        // quietest level heard so far, kept between -55 and -35 dBFS. A fixed level stopped
+        // quiet laptop mics while the speaker was still talking.
+        if rms > 1e-5 {
+            self.noise_floor_db = self.noise_floor_db.min(db);
+        }
+        let threshold = (self.noise_floor_db + 10.0).clamp(-55.0, -35.0);
+        if db > threshold {
             self.last_voice = Some(now);
             return;
         }
@@ -663,13 +785,16 @@ impl Controller {
             Input::Hotkey(ev) => self.on_hotkey(ev),
             Input::Cmd(cmd) => self.command(cmd),
             Input::JobDone => {
-                self.job_cancel = None;
-                self.machine.handle(Command::Finished);
-                self.set_state();
+                self.jobs = self.jobs.saturating_sub(1);
+                self.job_cancels.retain(|c| Arc::strong_count(c) > 1);
+                if self.jobs == 0 {
+                    self.machine.handle(Command::Finished);
+                    self.set_state();
+                }
             }
             Input::PasteLast => self.paste_last(),
             Input::CommandToggle => {
-                if self.machine.state() == State::Idle {
+                if self.machine.state() != State::Recording {
                     self.command_mode = true;
                 }
                 self.command(Command::Toggle);
@@ -718,7 +843,7 @@ impl Controller {
         // The command key works like the dictation key, and marks the dictation as a command.
         let ev = match ev {
             HotkeyEvent::CommandDown => {
-                if state == State::Idle {
+                if state != State::Recording {
                     self.command_mode = true;
                 }
                 HotkeyEvent::Down
@@ -728,6 +853,16 @@ impl Controller {
         };
         match (self.config.hotkey.mode, ev) {
             (_, HotkeyEvent::CommandDown | HotkeyEvent::CommandUp) => {}
+            (HotkeyMode::PushToTalk, HotkeyEvent::Chord) => {
+                // Right Ctrl+C and the like: the key was used for a shortcut early in the
+                // hold, so drop the recording quietly. Later on it is a slip while talking.
+                let early = self.down_at.is_some_and(|t| t.elapsed() < CHORD_WINDOW);
+                if state == State::Recording && !self.latched && early {
+                    tracing::debug!("hotkey used in a shortcut; recording dropped");
+                    self.discard_quietly();
+                }
+            }
+            (HotkeyMode::Toggle, HotkeyEvent::Chord) => {}
             (_, HotkeyEvent::Escape) => {
                 if state != State::Idle {
                     self.command(Command::Cancel);
@@ -736,7 +871,7 @@ impl Controller {
             (HotkeyMode::Toggle, HotkeyEvent::Down) => self.command(Command::Toggle),
             (HotkeyMode::Toggle, HotkeyEvent::Up) => {}
             (HotkeyMode::PushToTalk, HotkeyEvent::Down) => match state {
-                State::Idle => {
+                State::Idle | State::Processing => {
                     self.down_at = Some(Instant::now());
                     self.latched = false;
                     self.command(Command::Start);
@@ -752,6 +887,8 @@ impl Controller {
                         self.shared.hands_free.store(true, Ordering::Relaxed);
                         tracing::debug!("tap: hands-free dictation");
                     } else {
+                        // Let the last syllable land before the mic closes.
+                        thread::sleep(KEY_UP_TAIL);
                         self.command(Command::Stop);
                     }
                 }
@@ -763,10 +900,11 @@ impl Controller {
         let effect = self.machine.handle(cmd);
         match effect {
             Effect::None => {}
-            Effect::StartCapture => match self.recorder.start(Some(&self.config.audio.device)) {
+            Effect::StartCapture => match self.open_mic() {
                 Ok(r) => {
                     self.recording = Some(r);
                     self.last_voice = None;
+                    self.noise_floor_db = 0.0;
                     self.reset_preview();
                     self.warm_engine();
                     if self.config.audio.pause_media {
@@ -794,10 +932,14 @@ impl Controller {
                     }
                     Some(Err(e)) => {
                         tracing::error!("{e}");
-                        self.machine.handle(Command::Finished);
+                        if self.jobs == 0 {
+                            self.machine.handle(Command::Finished);
+                        }
                     }
                     None => {
-                        self.machine.handle(Command::Finished);
+                        if self.jobs == 0 {
+                            self.machine.handle(Command::Finished);
+                        }
                     }
                 }
             }
@@ -815,12 +957,49 @@ impl Controller {
             }
             Effect::AbortProcessing => {
                 crate::sounds::play(&self.config, crate::sounds::Cue::Cancel);
-                if let Some(c) = &self.job_cancel {
+                for c in &self.job_cancels {
                     c.store(true, Ordering::Relaxed);
                 }
                 tracing::info!("dictation cancelled while processing");
             }
         }
+        self.set_state();
+    }
+
+    /// Open the chosen mic; if it has gone (unplugged USB or Bluetooth), the default one, so
+    /// the dictation still happens.
+    fn open_mic(&self) -> Result<Recording, vaani_audio::AudioError> {
+        let chosen = self.config.audio.device.as_str();
+        match self.recorder.start(Some(chosen)) {
+            Err(vaani_audio::AudioError::DeviceNotFound(name)) => {
+                tracing::warn!(%name, "chosen microphone not found; using the default one");
+                let r = self.recorder.start(None);
+                if r.is_ok() {
+                    crate::notify::send(
+                        "Using the default microphone",
+                        &format!("{name} isn't connected."),
+                    );
+                }
+                r
+            }
+            other => other,
+        }
+    }
+
+    /// Drop the recording without the cancel sound (the key was used for a shortcut).
+    fn discard_quietly(&mut self) {
+        if self.machine.handle(Command::Cancel) != Effect::DiscardCapture {
+            self.set_state();
+            return;
+        }
+        self.clear_recording_flags();
+        crate::media::resume();
+        if let Some(r) = self.recording.take() {
+            r.discard();
+        }
+        self.early = Early::default();
+        self.reset_preview();
+        self.command_mode = false;
         self.set_state();
     }
 
@@ -843,7 +1022,15 @@ impl Controller {
 
     fn spawn_job(&mut self, samples: Vec<f32>, early: Early) {
         let cancel = Arc::new(AtomicBool::new(false));
-        self.job_cancel = Some(cancel.clone());
+        self.job_cancels.push(cancel.clone());
+        let ticket = self.next_ticket;
+        self.next_ticket += 1;
+        self.jobs += 1;
+        let guard = JobGuard {
+            tx: self.tx.clone(),
+            order: self.order.clone(),
+            ticket,
+        };
         let ctx = Job {
             engine: self.engine.clone(),
             injector: self.injector.clone(),
@@ -853,14 +1040,19 @@ impl Controller {
             cancel,
             early,
             command: std::mem::take(&mut self.command_mode),
+            order: self.order.clone(),
+            ticket,
         };
-        let tx = self.tx.clone();
-        let _ = thread::Builder::new()
+        let spawned = thread::Builder::new()
             .name("dictation".into())
             .spawn(move || {
+                // Dropped when the job ends, even by a panic: reports it done.
+                let _guard = guard;
                 ctx.run(samples);
-                let _ = tx.send(Input::JobDone);
             });
+        if let Err(e) = spawned {
+            tracing::error!("cannot start the dictation job: {e}");
+        }
     }
 
     fn paste_last(&mut self) {
@@ -875,6 +1067,23 @@ impl Controller {
     }
 }
 
+/// The Dictionary's words, as hints for engines that take them.
+pub(crate) fn dictionary_words(config: &Config) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    for r in &config.dictionary.replacements {
+        let w = r.to.trim();
+        // Short names and terms; whole sentences and addresses are not words to hear.
+        if !w.is_empty()
+            && w.split_whitespace().count() <= 3
+            && !w.contains('\n')
+            && !words.iter().any(|x| x == w)
+        {
+            words.push(w.to_string());
+        }
+    }
+    words
+}
+
 struct Job {
     engine: EngineSlot,
     injector: Option<Injector>,
@@ -884,24 +1093,29 @@ struct Job {
     cancel: Arc<AtomicBool>,
     early: Early,
     command: bool,
+    order: Arc<InsertOrder>,
+    ticket: u64,
 }
 
 impl Job {
-    /// The Dictionary's words, as hints for engines that take them.
     fn vocabulary(&self) -> Vec<String> {
-        let mut words: Vec<String> = Vec::new();
-        for r in &self.config.dictionary.replacements {
-            let w = r.to.trim();
-            // Short names and terms; whole sentences and addresses are not words to hear.
-            if !w.is_empty()
-                && w.split_whitespace().count() <= 3
-                && !w.contains('\n')
-                && !words.iter().any(|x| x == w)
-            {
-                words.push(w.to_string());
-            }
+        dictionary_words(&self.config)
+    }
+
+    /// What was said just before, for engines that take a prompt: the earlier pieces of this
+    /// dictation, else the last dictation if it was in the last three minutes.
+    fn context(&self, done: &[String]) -> String {
+        if !done.is_empty() {
+            return done.join(" ");
         }
-        words
+        self.shared
+            .last_text
+            .lock()
+            .ok()
+            .and_then(|l| l.clone())
+            .filter(|(at, _)| at.elapsed() < Duration::from_secs(180))
+            .map(|(_, t)| t)
+            .unwrap_or_default()
     }
 
     /// Delete the last dictation with BackSpace, if it was inserted in the last 10 minutes.
@@ -1187,9 +1401,38 @@ impl Job {
                 return;
             };
             engine.set_vocabulary(&self.vocabulary());
-            engine
-                .transcribe(rest, &self.config.general.language)
-                .map(|t| (t, engine.name()))
+            let mut context = self.context(&done);
+            let language = &self.config.general.language;
+            // Whisper and Moonshine get the audio in pieces they can read whole.
+            let mut texts: Vec<String> = Vec::new();
+            let mut took = Duration::ZERO;
+            let mut result = Ok(());
+            for piece in split_pieces(rest, piece_limit(&self.config)) {
+                engine.set_context(&context);
+                match engine.transcribe(piece, language) {
+                    Ok(t) => {
+                        took += t.took;
+                        if !t.text.trim().is_empty() {
+                            context = format!("{context} {}", t.text.trim());
+                            texts.push(t.text.trim().to_string());
+                        }
+                    }
+                    Err(e) => {
+                        result = Err(e);
+                        break;
+                    }
+                }
+            }
+            engine.set_context("");
+            result.map(|()| {
+                (
+                    vaani_stt::Transcript {
+                        text: texts.join(" "),
+                        took,
+                    },
+                    engine.name(),
+                )
+            })
         };
         let (raw, engine_name) = match result {
             Ok((t, name)) => {
@@ -1226,6 +1469,7 @@ impl Job {
         }
         // "Scratch that": remove the previous dictation instead of typing anything.
         if self.config.dictionary.spoken_commands && vaani_text::is_scratch(&raw) {
+            self.order.wait_turn(self.ticket, Duration::from_secs(60));
             self.scratch_last();
             return;
         }
@@ -1266,6 +1510,7 @@ impl Job {
             return;
         };
         if self.command {
+            self.order.wait_turn(self.ticket, Duration::from_secs(60));
             self.run_command(&text, &app);
             return;
         }
@@ -1313,6 +1558,8 @@ impl Job {
                     id
                 })
         };
+        // An earlier dictation still being typed goes first.
+        self.order.wait_turn(self.ticket, Duration::from_secs(60));
         if self.cancel.load(Ordering::Relaxed) {
             return;
         }
@@ -1375,5 +1622,84 @@ impl Job {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Speech-like noise at `amp` for `secs`, then a pause of `pause_ms` at `floor`.
+    fn speech(secs: usize, amp: f32) -> Vec<f32> {
+        (0..16_000 * secs)
+            .map(|i| amp * ((i as f32 * 0.13).sin() + (i as f32 * 0.029).sin()) / 2.0)
+            .collect()
+    }
+    fn pause(ms: usize, floor: f32) -> Vec<f32> {
+        (0..16 * ms)
+            .map(|i| floor * (i as f32 * 0.7).sin())
+            .collect()
+    }
+
+    #[test]
+    fn quiet_mic_is_cut_at_its_pause() {
+        // A quiet speaker (peaks at 0.008, under the old fixed 0.01 "quiet" level) with
+        // one clear pause at 18 s.
+        let mut a = speech(18, 0.008);
+        a.extend(pause(800, 0.0005));
+        a.extend(speech(6, 0.008));
+        let cut = find_cut(&a, 0, PIECE_FORCE).expect("a cut");
+        let at = cut as f32 / 16_000.0;
+        assert!((18.0..18.8).contains(&at), "cut at {at}");
+    }
+
+    #[test]
+    fn short_breaths_are_not_cuts_until_the_piece_is_long() {
+        let mut a = speech(16, 0.2);
+        a.extend(pause(400, 0.001));
+        a.extend(speech(3, 0.2));
+        assert_eq!(find_cut(&a, 0, PIECE_FORCE), None);
+    }
+
+    #[test]
+    fn whisper_pieces_stay_under_30_seconds() {
+        // 70 s with no pause at all.
+        let a = speech(70, 0.2);
+        let pieces = split_pieces(&a, PIECE_SHORT);
+        assert!(pieces.len() >= 3);
+        assert!(pieces.iter().all(|p| p.len() <= PIECE_SHORT));
+        assert_eq!(pieces.iter().map(|p| p.len()).sum::<usize>(), a.len());
+        // Short audio stays whole.
+        assert_eq!(split_pieces(&a[..16_000 * 5], PIECE_SHORT).len(), 1);
+    }
+
+    #[test]
+    fn overlapping_dictations_insert_in_order() {
+        let order = Arc::new(InsertOrder::default());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        // Ticket 1 is ready first but must wait for ticket 0.
+        for (ticket, delay) in [(1u64, 0u64), (0, 80)] {
+            let (o, s) = (order.clone(), seen.clone());
+            handles.push(thread::spawn(move || {
+                thread::sleep(Duration::from_millis(delay));
+                o.wait_turn(ticket, Duration::from_secs(5));
+                s.lock().unwrap().push(ticket);
+                o.done(ticket);
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(*seen.lock().unwrap(), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_failed_dictation_does_not_block_the_next() {
+        let order = InsertOrder::default();
+        order.done(0); // finished without inserting
+        let t = Instant::now();
+        order.wait_turn(1, Duration::from_secs(5));
+        assert!(t.elapsed() < Duration::from_secs(1));
     }
 }

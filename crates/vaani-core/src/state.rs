@@ -82,6 +82,9 @@ impl Machine {
             (S::Idle, C::Start | C::Toggle) => (S::Recording, Effect::StartCapture),
             (S::Recording, C::Stop | C::Toggle) => (S::Processing, Effect::StopCaptureAndProcess),
             (S::Recording, C::Cancel) => (S::Idle, Effect::DiscardCapture),
+            // A new dictation can start while the last one is still being transcribed or
+            // typed; its text is inserted after the earlier one's.
+            (S::Processing, C::Start | C::Toggle) => (S::Recording, Effect::StartCapture),
             (S::Processing, C::Cancel) => (S::Idle, Effect::AbortProcessing),
             (S::Processing, C::Finished) => (S::Idle, Effect::None),
             // Everything else is ignored: e.g. Start while recording, Stop while idle.
@@ -117,9 +120,9 @@ mod tests {
         assert_eq!(m.state(), State::Recording);
         m.handle(Command::Toggle);
         assert_eq!(m.state(), State::Processing);
-        // Toggle during processing does not start a second dictation.
-        assert_eq!(m.handle(Command::Toggle), Effect::None);
-        assert_eq!(m.state(), State::Processing);
+        // Toggle during processing starts the next dictation straight away.
+        assert_eq!(m.handle(Command::Toggle), Effect::StartCapture);
+        assert_eq!(m.state(), State::Recording);
     }
 
     #[test]

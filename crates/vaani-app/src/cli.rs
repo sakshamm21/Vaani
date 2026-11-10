@@ -55,6 +55,20 @@ pub enum Cmd {
         #[arg(long)]
         models: bool,
     },
+    /// Measure how well a speech engine hears you: word error rate and time per clip.
+    Bench {
+        /// A folder of WAV clips, each with a .txt of what was said.
+        dir: std::path::PathBuf,
+        /// Record a test set of your own voice into the folder instead.
+        #[arg(long)]
+        record: bool,
+        /// Measure this downloaded local model instead of the one in Settings.
+        #[arg(long, conflicts_with = "cloud")]
+        model: Option<String>,
+        /// Measure the cloud provider from Settings.
+        #[arg(long)]
+        cloud: bool,
+    },
     /// Check this computer's setup and print a report to paste into bug reports.
     Doctor {
         /// Print the report as JSON.

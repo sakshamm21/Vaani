@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -57,6 +57,7 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 xkbcommon = { version = "0.9", default-features = false }
 hound = "3.5"
+flacenc = { version = "0.5", default-features = false }
 gtk4 = "0.11"
 gdk4-x11 = "0.11"
 ksni = "0.3"

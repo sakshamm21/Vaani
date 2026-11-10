@@ -141,6 +141,7 @@ pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyE
             // release count.
             let mut held = 0usize;
             let mut cmd_held = 0usize;
+            let mut chorded = false;
             let mut rescan = Instant::now();
             while !stop.load(Ordering::Relaxed) {
                 if let Ok(k) = key.lock() {
@@ -164,6 +165,7 @@ pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyE
                     // value: 1 press, 0 release, 2 auto-repeat (ignored)
                     if Some(code) == hot {
                         if let Some(ev) = track(&mut held, value, HotkeyEvent::Down, HotkeyEvent::Up) {
+                            chorded = false;
                             send(ev);
                         }
                     } else if Some(code) == cmd {
@@ -174,6 +176,10 @@ pub fn listen(watch: Watch, tx: Sender<HotkeyEvent>) -> Result<Listener, HotkeyE
                         }
                     } else if code == KeyCode::KEY_ESC && value == 1 {
                         send(HotkeyEvent::Escape);
+                    } else if held > 0 && !chorded && value == 1 && code.0 < 0x100 {
+                        // A key (not a mouse button) pressed with the hotkey: a shortcut.
+                        chorded = true;
+                        send(HotkeyEvent::Chord);
                     }
                 }
             }

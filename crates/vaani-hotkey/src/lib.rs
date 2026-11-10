@@ -67,6 +67,9 @@ pub enum HotkeyEvent {
     CommandDown,
     /// The command-mode key came back up.
     CommandUp,
+    /// Another key was pressed while the hotkey was held (Right Ctrl+C): the hotkey is
+    /// part of an ordinary shortcut, not a dictation. Sent once per hold.
+    Chord,
 }
 
 /// The keys a listener watches: the dictation key and an optional command-mode key
